@@ -1,0 +1,6 @@
+.venv/
+.landing_cache/
+__pycache__/
+*.pyc
+.databrickscfg
+.databricks/

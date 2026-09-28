@@ -1,0 +1,44 @@
+# databricks.yml — one bundle, two targets in the same Free Edition workspace
+bundle:
+  name: a2c_bikeshare_ops
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog catalog (Free Edition creates one called "workspace")
+    default: workspace
+  env:
+    description: Schema prefix for this target (dev_* or prd_*)
+    default: dev
+  notify_email:
+    description: Where failure notifications go
+    default: fahim.faysal@bjitgroup.com
+  warehouse_id:
+    description: SQL warehouse for the dashboard and SQL tasks
+    lookup:
+      warehouse: "Serverless Starter Warehouse"
+  gbfs_pause:
+    description: PAUSED or UNPAUSED for the GBFS polling job
+    default: PAUSED
+
+targets:
+  dev:
+    mode: development
+    # [dev you] name prefix, triggers and schedules paused
+    default: true
+    workspace:
+      host: https://dbc-cb530432-dccc.cloud.databricks.com
+    variables:
+      env: dev
+
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-cb530432-dccc.cloud.databricks.com
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      env: prd
+      gbfs_pause: UNPAUSED
+      # set to PAUSED and redeploy after 8+ hours of snapshots
