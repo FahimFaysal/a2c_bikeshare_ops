@@ -134,8 +134,8 @@ variables, job parameters, or pipeline configuration.
 | 5 | Governance, dashboard, client pack | S7 Governance | Grants, filters, masks, ABAC, dashboard, demo |
 
 ### Day 1 tasks
-- [x] **1.1 Environment & smoke test** — done; see [Environment findings](#environment-findings-task-11).
-- [x] **1.2 Repository and bundle skeleton (files)** — all starter-kit files created in this repo; `bundle validate`/`deploy`/`setup_job` still to run.
+- [x] **1.1 Environment & smoke test** — done; see [Task evidence log](#task-11--environment--smoke-test).
+- [x] **1.2 Repository and bundle skeleton** — done; see [Task evidence log](#task-12--repository-and-bundle-skeleton).
 - [ ] **1.3 Land first period + COPY INTO reference data** — `drop_files.py --env dev --match 202502`, `ref_station_information`.
 - [ ] **1.4 REST ingestion with secrets** — NOAA token in secret scope `a2`, `weather_rest.py`, `gbfs_poll.py`.
 
@@ -215,7 +215,9 @@ This layout is now fully populated (all files listed above exist); the remaining
 
 ---
 
-## Environment findings (Task 1.1)
+## Task evidence log
+
+### Task 1.1 — Environment & smoke test
 
 Captured by running `tools/00_smoke_test.py` as a one-off Databricks job (serverless, no cluster
 config) against the target workspace on 2026-09-28, plus two supplementary one-off capability
@@ -258,7 +260,45 @@ Raw smoke-test JSON (`00_smoke_test.py` run, job run id `883611601922860`, task 
 }
 ```
 
-### What this means for the rest of the build
+### Task 1.2 — Repository and bundle skeleton
+
+Repo: https://github.com/FahimFaysal/a2c_bikeshare_ops (public, standalone).
+
+Hit and fixed one real environment issue: Databricks CLI v0.244.0's `bundle validate` failed with
+`error downloading Terraform: unable to verify checksums signature: openpgp: key expired` — a
+dated HashiCorp GPG-key-expiry bug in the CLI's internal Terraform auto-download (the CLI uses
+Terraform as its invisible deployment engine; we never write Terraform ourselves). Fixed by
+upgrading the CLI to v1.18.0 (downloaded release binary the same way as the initial install).
+
+Verified "done when" criteria, all real:
+
+```
+$ databricks bundle validate -t dev
+Validation OK!
+
+$ databricks bundle deploy -t dev
+Created jobs.weather_job / release_job / setup_job / gbfs_job
+Created pipelines.lakehouse
+Created jobs.build_job
+Files: 28 uploaded, 0 deleted
+Resources: 6 created, 0 changed, 0 deleted, 0 unchanged
+```
+
+No bootstrap-trigger error occurred on first deploy (the documented risk about `build_job`'s
+file-arrival trigger / `release_job`'s table-update trigger referencing not-yet-existing objects) —
+worth noting as a risk that did not materialise here, not proof it can't on a re-deploy.
+
+```
+$ databricks bundle run -t dev setup_job
+TERMINATED SUCCESS
+
+SHOW SCHEMAS IN workspace LIKE 'dev_*'   -> dev_gold, dev_lakehouse, dev_landing, dev_ops
+SHOW VOLUMES IN workspace.dev_landing    -> raw
+SELECT * FROM workspace.dev_ops.entitlements
+  -> fahim.faysal@bjitgroup.com | *  | true
+```
+
+#### What this means for the rest of the build
 - No REST host used by this variant is blocked from serverless notebooks — Tasks 1.3/1.4 (COPY INTO,
   weather REST, GBFS poll) can run directly in the workspace; no laptop-side REST fallback is needed.
 - Row filters and governed tags both work on this Free Edition workspace, so Day 5's ABAC policies

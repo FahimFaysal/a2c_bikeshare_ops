@@ -9,10 +9,19 @@ actual command/output captured — nothing is written ahead of verification.
 See `README.md` → "Environment findings (Task 1.1)" for the full table and raw JSON.
 
 ### Task 1.2 — Repository and bundle skeleton
-- Repo: (GitHub URL once created)
-- `databricks bundle validate` output:
-- `databricks bundle deploy -t dev` output:
-- `setup_job` run: schemas created, volume path, `entitlements` row —
+- Repo: https://github.com/FahimFaysal/a2c_bikeshare_ops (public, standalone)
+- Environment issue hit + fixed: CLI v0.244.0's `bundle validate` failed with
+  `error downloading Terraform: unable to verify checksums signature: openpgp: key expired`
+  (HashiCorp GPG-key-expiry bug in the CLI's internal Terraform download). Fixed by upgrading the
+  Databricks CLI to v1.18.0.
+- `databricks bundle validate -t dev` → `Validation OK!`
+- `databricks bundle deploy -t dev` → `Resources: 6 created, 0 changed, 0 deleted, 0 unchanged`
+  (jobs.weather_job, jobs.release_job, jobs.setup_job, jobs.gbfs_job, jobs.build_job,
+  pipelines.lakehouse); `Files: 28 uploaded, 0 deleted`. No bootstrap-trigger error on first deploy.
+- `databricks bundle run -t dev setup_job` → `TERMINATED SUCCESS`
+- `SHOW SCHEMAS IN workspace LIKE 'dev_*'` → `dev_gold, dev_lakehouse, dev_landing, dev_ops`
+- `SHOW VOLUMES IN workspace.dev_landing` → `raw`
+- `SELECT * FROM workspace.dev_ops.entitlements` → `fahim.faysal@bjitgroup.com | * | true`
 
 ### Task 1.3 — Land first period + reference data
 -
