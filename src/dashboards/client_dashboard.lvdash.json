@@ -1,0 +1,925 @@
+{
+  "datasets": [
+    {
+      "name": "release",
+      "displayName": "Latest certified release",
+      "queryLines": [
+        "-- The one fully qualified name in this file: the status table lives in the ops schema, not in gold\n",
+        "SELECT date_format(last_certified_at, 'yyyy-MM-dd HH:mm') AS last_certified_utc,\n",
+        "       certified_releases, last_periods\n",
+        "FROM workspace.prd_ops.release_status\n"
+      ]
+    },
+    {
+      "name": "heat",
+      "displayName": "BQ1 hour x weekday",
+      "queryLines": [
+        "SELECT concat(weekday(start_date) + 1, ' ', start_dow) AS weekday, start_hour, sum(trips) AS trips\n",
+        "FROM gold_demand_hourly GROUP BY ALL\n"
+      ]
+    },
+    {
+      "name": "monthly",
+      "displayName": "BQ1 monthly demand and e-bike share",
+      "queryLines": [
+        "-- complete months only: a month with fewer than 27 days of data is a boundary stub\n",
+        "SELECT period,\n",
+        "       round(sum(trips) / count(DISTINCT start_date)) AS trips_per_day,\n",
+        "       round(100 * sum(ebike_trips) / sum(trips), 1)  AS ebike_pct,\n",
+        "       round(100 * sum(member_trips) / sum(trips), 1) AS member_pct\n",
+        "FROM gold_weather_demand GROUP BY period HAVING count(DISTINCT start_date) >= 27 ORDER BY period\n"
+      ]
+    },
+    {
+      "name": "weather",
+      "displayName": "BQ1 rain effect within each month",
+      "queryLines": [
+        "WITH d AS (SELECT period, start_date, max(is_rain_day) AS is_rain_day, sum(trips) AS trips\n",
+        "           FROM gold_weather_demand GROUP BY period, start_date)\n",
+        "SELECT period,\n",
+        "       count_if(NOT is_rain_day) AS dry_days,\n",
+        "       count_if(is_rain_day)     AS rain_days,\n",
+        "       round(avg(CASE WHEN NOT is_rain_day THEN trips END)) AS dry_trips_per_day,\n",
+        "       round(avg(CASE WHEN is_rain_day THEN trips END))     AS rain_trips_per_day,\n",
+        "       round(100 * (avg(CASE WHEN is_rain_day THEN trips END) / avg(CASE WHEN NOT is_rain_day THEN trips END) - 1), 1) AS rain_vs_dry_pct\n",
+        "FROM d GROUP BY period HAVING count(*) >= 27 ORDER BY period\n"
+      ]
+    },
+    {
+      "name": "flow",
+      "displayName": "BQ2 top 20 draining and filling stations per peak",
+      "queryLines": [
+        "SELECT peak_window, direction, rank_in_list, system, station_name,\n",
+        "       avg_departures_per_weekday, avg_arrivals_per_weekday, avg_net_flow_per_weekday, lat, lng\n",
+        "FROM (\n",
+        "  SELECT *, CASE WHEN avg_net_flow_per_weekday < 0 THEN 'drains' ELSE 'fills' END AS direction,\n",
+        "         row_number() OVER (PARTITION BY peak_window, avg_net_flow_per_weekday < 0\n",
+        "                            ORDER BY abs(avg_net_flow_per_weekday) DESC) AS rank_in_list\n",
+        "  FROM gold_station_flow)\n",
+        "WHERE rank_in_list <= 20\n",
+        "ORDER BY peak_window, direction, rank_in_list\n"
+      ]
+    },
+    {
+      "name": "duration",
+      "displayName": "BQ3 duration percentiles by month",
+      "queryLines": [
+        "SELECT period, concat(rideable_type, ' / ', member_type) AS bike_and_rider,\n",
+        "       p50_duration_min, p90_duration_min\n",
+        "FROM gold_ride_behaviour WHERE system = 'NYC' AND trips >= 1000 ORDER BY period\n"
+      ]
+    },
+    {
+      "name": "behaviour",
+      "displayName": "BQ3 round trips and long rides",
+      "queryLines": [
+        "SELECT rideable_type, member_type, sum(trips) AS trips,\n",
+        "       round(100 * sum(round_trips) / sum(trips), 2)       AS round_trip_pct,\n",
+        "       round(100 * sum(trips_over_45_min) / sum(trips), 2) AS over_45_min_pct\n",
+        "FROM gold_ride_behaviour GROUP BY ALL ORDER BY 1, 2\n"
+      ]
+    },
+    {
+      "name": "health",
+      "displayName": "BQ4 busy stations that run empty or full",
+      "queryLines": [
+        "-- the 100 busiest matched stations, ordered by how often they were empty or full in the snapshots\n",
+        "SELECT system, station_name, departures, snapshots,\n",
+        "       round(100 * empty_share, 1) AS empty_pct, round(100 * full_share, 1) AS full_pct, lat, lng\n",
+        "FROM (SELECT * FROM gold_station_health ORDER BY departures DESC LIMIT 100)\n",
+        "ORDER BY greatest(empty_share, full_share) DESC LIMIT 20\n"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "overview",
+      "displayName": "Bike-share operations",
+      "layout": [
+        {
+          "widget": {
+            "name": "title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Bike-share operations: demand, rebalancing and station health\n",
+                "New York City and Jersey City trips, May 2024 to June 2025. Every figure comes from monthly files reconciled to their source.\n"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "release_at",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "release",
+                  "fields": [
+                    {
+                      "name": "last_certified_utc",
+                      "expression": "`last_certified_utc`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Latest certified release (UTC)"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "last_certified_utc",
+                  "displayName": "last certified utc"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "release_n",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "release",
+                  "fields": [
+                    {
+                      "name": "certified_releases",
+                      "expression": "`certified_releases`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Certified releases"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "certified_releases",
+                  "displayName": "certified releases"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "release_periods",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "release",
+                  "fields": [
+                    {
+                      "name": "last_periods",
+                      "expression": "`last_periods`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "Periods in the latest release"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "last_periods",
+                    "displayName": "last periods"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 6,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "heatmap",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "heat",
+                  "fields": [
+                    {
+                      "name": "start_hour",
+                      "expression": "`start_hour`"
+                    },
+                    {
+                      "name": "weekday",
+                      "expression": "`weekday`"
+                    },
+                    {
+                      "name": "sum(trips)",
+                      "expression": "SUM(`trips`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "BQ1 \u00b7 When the city rides: trips by hour and weekday"
+              },
+              "version": 3,
+              "widgetType": "heatmap",
+              "encodings": {
+                "x": {
+                  "fieldName": "start_hour",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Hour of day"
+                },
+                "y": {
+                  "fieldName": "weekday",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Weekday"
+                },
+                "color": {
+                  "fieldName": "sum(trips)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Trips"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "ebike",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "monthly",
+                  "fields": [
+                    {
+                      "name": "period",
+                      "expression": "`period`"
+                    },
+                    {
+                      "name": "sum(ebike_pct)",
+                      "expression": "SUM(`ebike_pct`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "BQ1 \u00b7 E-bike share of trips by month (%)"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "period",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Month"
+                },
+                "y": {
+                  "fieldName": "sum(ebike_pct)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "E-bike share %"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "perday",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "monthly",
+                  "fields": [
+                    {
+                      "name": "period",
+                      "expression": "`period`"
+                    },
+                    {
+                      "name": "sum(trips_per_day)",
+                      "expression": "SUM(`trips_per_day`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "BQ1 \u00b7 Trips per day by month"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "period",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Month"
+                },
+                "y": {
+                  "fieldName": "sum(trips_per_day)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Trips per day"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 12,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "weather_tbl",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "weather",
+                  "fields": [
+                    {
+                      "name": "period",
+                      "expression": "`period`"
+                    },
+                    {
+                      "name": "dry_days",
+                      "expression": "`dry_days`"
+                    },
+                    {
+                      "name": "rain_days",
+                      "expression": "`rain_days`"
+                    },
+                    {
+                      "name": "dry_trips_per_day",
+                      "expression": "`dry_trips_per_day`"
+                    },
+                    {
+                      "name": "rain_trips_per_day",
+                      "expression": "`rain_trips_per_day`"
+                    },
+                    {
+                      "name": "rain_vs_dry_pct",
+                      "expression": "`rain_vs_dry_pct`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "BQ1 \u00b7 Rain days (5 mm or more) against dry days, within each month"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "period",
+                    "displayName": "period"
+                  },
+                  {
+                    "fieldName": "dry_days",
+                    "displayName": "dry days"
+                  },
+                  {
+                    "fieldName": "rain_days",
+                    "displayName": "rain days"
+                  },
+                  {
+                    "fieldName": "dry_trips_per_day",
+                    "displayName": "dry trips per day"
+                  },
+                  {
+                    "fieldName": "rain_trips_per_day",
+                    "displayName": "rain trips per day"
+                  },
+                  {
+                    "fieldName": "rain_vs_dry_pct",
+                    "displayName": "rain vs dry pct"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 12,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "flow_tbl",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "flow",
+                  "fields": [
+                    {
+                      "name": "peak_window",
+                      "expression": "`peak_window`"
+                    },
+                    {
+                      "name": "direction",
+                      "expression": "`direction`"
+                    },
+                    {
+                      "name": "rank_in_list",
+                      "expression": "`rank_in_list`"
+                    },
+                    {
+                      "name": "system",
+                      "expression": "`system`"
+                    },
+                    {
+                      "name": "station_name",
+                      "expression": "`station_name`"
+                    },
+                    {
+                      "name": "avg_departures_per_weekday",
+                      "expression": "`avg_departures_per_weekday`"
+                    },
+                    {
+                      "name": "avg_arrivals_per_weekday",
+                      "expression": "`avg_arrivals_per_weekday`"
+                    },
+                    {
+                      "name": "avg_net_flow_per_weekday",
+                      "expression": "`avg_net_flow_per_weekday`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "BQ2 \u00b7 Top 20 stations that drain and fill in each weekday peak (bikes per weekday)"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "peak_window",
+                    "displayName": "peak window"
+                  },
+                  {
+                    "fieldName": "direction",
+                    "displayName": "direction"
+                  },
+                  {
+                    "fieldName": "rank_in_list",
+                    "displayName": "rank in list"
+                  },
+                  {
+                    "fieldName": "system",
+                    "displayName": "system"
+                  },
+                  {
+                    "fieldName": "station_name",
+                    "displayName": "station name"
+                  },
+                  {
+                    "fieldName": "avg_departures_per_weekday",
+                    "displayName": "avg departures per weekday"
+                  },
+                  {
+                    "fieldName": "avg_arrivals_per_weekday",
+                    "displayName": "avg arrivals per weekday"
+                  },
+                  {
+                    "fieldName": "avg_net_flow_per_weekday",
+                    "displayName": "avg net flow per weekday"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 25,
+            "width": 7,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "flow_map",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "flow",
+                  "fields": [
+                    {
+                      "name": "lat",
+                      "expression": "`lat`"
+                    },
+                    {
+                      "name": "lng",
+                      "expression": "`lng`"
+                    },
+                    {
+                      "name": "direction",
+                      "expression": "`direction`"
+                    },
+                    {
+                      "name": "station_name",
+                      "expression": "`station_name`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "BQ2 \u00b7 Where they are (coordinates generalised for non-entitled readers)"
+              },
+              "version": 3,
+              "widgetType": "symbol-map",
+              "encodings": {
+                "coordinates": {
+                  "latitude": {
+                    "fieldName": "lat",
+                    "displayName": "lat"
+                  },
+                  "longitude": {
+                    "fieldName": "lng",
+                    "displayName": "lng"
+                  }
+                },
+                "color": {
+                  "fieldName": "direction",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Direction"
+                },
+                "extra": [
+                  {
+                    "fieldName": "station_name",
+                    "displayName": "Station"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 7,
+            "y": 25,
+            "width": 5,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "duration",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "duration",
+                  "fields": [
+                    {
+                      "name": "period",
+                      "expression": "`period`"
+                    },
+                    {
+                      "name": "bike_and_rider",
+                      "expression": "`bike_and_rider`"
+                    },
+                    {
+                      "name": "sum(p50_duration_min)",
+                      "expression": "SUM(`p50_duration_min`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "BQ3 \u00b7 Median trip duration by bike and rider type, New York (minutes)"
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "period",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Month"
+                },
+                "y": {
+                  "fieldName": "sum(p50_duration_min)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Median minutes"
+                },
+                "color": {
+                  "fieldName": "bike_and_rider",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Bike / rider"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 34,
+            "width": 7,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "behaviour_tbl",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "behaviour",
+                  "fields": [
+                    {
+                      "name": "rideable_type",
+                      "expression": "`rideable_type`"
+                    },
+                    {
+                      "name": "member_type",
+                      "expression": "`member_type`"
+                    },
+                    {
+                      "name": "trips",
+                      "expression": "`trips`"
+                    },
+                    {
+                      "name": "round_trip_pct",
+                      "expression": "`round_trip_pct`"
+                    },
+                    {
+                      "name": "over_45_min_pct",
+                      "expression": "`over_45_min_pct`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "BQ3 \u00b7 Round trips and rides over 45 minutes"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "rideable_type",
+                    "displayName": "rideable type"
+                  },
+                  {
+                    "fieldName": "member_type",
+                    "displayName": "member type"
+                  },
+                  {
+                    "fieldName": "trips",
+                    "displayName": "trips"
+                  },
+                  {
+                    "fieldName": "round_trip_pct",
+                    "displayName": "round trip pct"
+                  },
+                  {
+                    "fieldName": "over_45_min_pct",
+                    "displayName": "over 45 min pct"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 7,
+            "y": 34,
+            "width": 5,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "health_tbl",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "health",
+                  "fields": [
+                    {
+                      "name": "system",
+                      "expression": "`system`"
+                    },
+                    {
+                      "name": "station_name",
+                      "expression": "`station_name`"
+                    },
+                    {
+                      "name": "departures",
+                      "expression": "`departures`"
+                    },
+                    {
+                      "name": "snapshots",
+                      "expression": "`snapshots`"
+                    },
+                    {
+                      "name": "empty_pct",
+                      "expression": "`empty_pct`"
+                    },
+                    {
+                      "name": "full_pct",
+                      "expression": "`full_pct`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "BQ4 \u00b7 Busy stations most often empty or full (share of live snapshots)"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "system",
+                    "displayName": "system"
+                  },
+                  {
+                    "fieldName": "station_name",
+                    "displayName": "station name"
+                  },
+                  {
+                    "fieldName": "departures",
+                    "displayName": "departures"
+                  },
+                  {
+                    "fieldName": "snapshots",
+                    "displayName": "snapshots"
+                  },
+                  {
+                    "fieldName": "empty_pct",
+                    "displayName": "empty pct"
+                  },
+                  {
+                    "fieldName": "full_pct",
+                    "displayName": "full pct"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 41,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "footer",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Trip data: Citi Bike public system data, provided by Lyft Bikes and Scooters under the Citi Bike Data License Agreement. Weather: NOAA National Centers for Environmental Information, Central Park daily summaries. ",
+                "Station availability comes from live GBFS snapshots covering hours, not months. This dashboard is not endorsed by or affiliated with Citi Bike or Lyft.\n"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 49,
+            "width": 12,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    }
+  }
+}

@@ -146,7 +146,7 @@ variables, job parameters, or pipeline configuration.
 
 ### Day 3 tasks
 - [x] **3.1 Build job: DAG, control flow, retries, alerts** — done in dev (e-mail receipt to confirm); see [Task evidence log](#task-31--the-build-job).
-- [ ] **3.2 Three kinds of trigger** — trigger table written ([Task evidence log](#task-32--three-kinds-of-trigger)); proven in prod in 3.3.
+- [x] **3.2 Three kinds of trigger** — done; table in [Task evidence log](#task-32--three-kinds-of-trigger), all three proven in prod (Task 3.3).
 - [ ] **3.3 CI/CD** — Git folder branch/PR/conflict, bundle targets, GitHub Actions, end-to-end prod run.
 
 ### Day 4 tasks
@@ -551,6 +551,51 @@ trigger and schedule); they are proven in `prod` in Task 3.3.
 | `release_job` | Table update on `ops.release` | The release summary and dashboard refresh must follow a certified release, never precede it. | A schedule guesses when the build finishes: too early publishes the previous state, and it cannot tell a certified run from a failed gate. Chaining it as a task of the build job would tie a consumer-facing step to the build's run. |
 | `weather_job` | Cron, daily 05:30 | NOAA pushes no events; daily data only changes daily. It also runs the pipeline-SLA check, which must fire even when nothing arrives. | A file-arrival trigger has nothing to watch before the job itself fetches the file. |
 | `gbfs_job` | Cron, every 30 minutes | The public feed is poll-only; 30 minutes is the agreed sampling rate. | An event trigger is not available for a source that emits no event; polling faster multiplies job runs against the compute quota. |
+
+### Task 3.3 — CI/CD (in progress)
+
+| Step | Evidence |
+|---|---|
+| Pull request validates | PR #1 (`feature/ingestion-and-pipeline` → `main`): Actions run `36706581781`, `validate` passed, both deploy jobs skipped |
+| Merge deploys | Merge commit `aa3e6fa`: Actions run `36706651209`, `validate` → `deploy-dev` → `deploy-prod` |
+| Prod resources | `a2c_bikeshare_ops_{setup,build,release,weather,gbfs}_prd` and pipeline `a2c_bikeshare_ops_lakehouse_prd`, no `[dev ...]` prefix; schemas `prd_gold`, `prd_lakehouse`, `prd_landing`, `prd_ops` |
+| Prod triggers | build: file arrival, UNPAUSED; release: table update, UNPAUSED; weather: cron `0 30 5 * * ?`; gbfs: cron `0 0/30 * * * ?`, UNPAUSED |
+
+**Bootstrap problem, met in prod.** The first `deploy-prod` attempt failed:
+`cannot create resources.jobs.release_job: The table 'workspace.prd_ops.release' does not exist` and
+`cannot create resources.jobs.build_job: No volume is defined at /Volumes/workspace/prd_landing/raw/tripdata_zip/`.
+The two triggers point at objects that only `setup_job` creates. The deploy was partial (pipeline,
+setup, weather and gbfs jobs were created), so instead of commenting out the trigger blocks the fix
+was: run the already-created prod setup job once (run `962059267652084`, SUCCESS), then re-run the
+failed Actions job, which passed. The same first deploy did not fail in `dev`. For a new workspace
+the order is therefore: deploy (fails on the two jobs), run `setup_job`, deploy again.
+
+CI authenticates with a personal access token stored as the GitHub secret `DATABRICKS_TOKEN`
+(Free Edition has no account-level APIs for OIDC federation). For a client this would be a service
+principal with workload identity federation and no stored secret.
+
+**End to end in prod (2026-09-30).** GBFS job first scheduled run `622960035711191` at 11:30 UTC
+(trigger PERIODIC) landed the first snapshots; `setup_job` loaded the station reference (1 row);
+`weather_job` run `398540347746629` landed two NOAA files and passed the `pipeline_sla` SQL task.
+February 2025 was then dropped with the simulator and nothing was started by hand:
+
+| Run | Trigger type | Started (UTC) | Result |
+|---|---|---|---|
+| build `1023214544527567` | File arrival | 11:38:42 | SUCCESS, 248 s: prepare 33 s, build 162 s, reconcile 28 s, gate true, certify |
+| release `20065706761208` | Table update | 11:42:58 | SUCCESS (14 s after `ops.release` was written at 11:42:44) |
+
+`prd_ops.reconciliation`: 2025-02 nyc expected 2,031,257 = Bronze 2,031,257 = Silver 2,030,942 +
+quarantine 315, OK; 2025-02 jc 45,255 = 45,247 + 8, OK.
+
+**Variable versus target override.** `bundle validate -t dev` resolves the release trigger to
+`workspace.dev_ops.release`, `-t prod` to `workspace.prd_ops.release`: one variable (`env`), two
+environments. The prod target also carries an override that exists nowhere else:
+`release_job.email_notifications.on_success`, so the client is told when a release is published.
+A variable substitutes a value into a definition every target shares; an override merges extra or
+different settings over the shared definition for one target only.
+
+Still to do (workspace UI): Git folder branch `feature/gold-kpis` with a PR, the merge-conflict
+exercise, and pausing GBFS through a PR after 8+ hours of snapshots.
 
 #### What this means for the rest of the build
 - No REST host used by this variant is blocked from serverless notebooks — Tasks 1.3/1.4 (COPY INTO,

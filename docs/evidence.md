@@ -15,8 +15,8 @@ actual command/output captured — nothing is written ahead of verification.
 | E6 | Secret redaction | 1.4 | run done; screenshot to add |
 | E7 | Build job DAG and green run | 3.1 | done — below; screenshot to add |
 | E8 | Incident branch run | 3.1 | done — below; screenshot and e-mail to add |
-| E9 | File-arrival and table-update triggered runs | 3.3 | |
-| E10 | GitHub Actions runs | 3.3 | |
+| E9 | File-arrival and table-update triggered runs | 3.3 | done — below; screenshots to add |
+| E10 | GitHub Actions runs | 3.3 | done — below; screenshots to add |
 | E11 | Tuning results | 4.2 | |
 | E12 | Skew before/after | 4.3 | |
 | E13 | Repair run | 4.3 | |
@@ -114,8 +114,15 @@ Run 2026-09-30, dev. Task-by-task table in `README.md` → "Task 3.1".
 ### Task 3.2 — Triggers
 -
 
-### Task 3.3 — CI/CD
--
+### Task 3.3 — CI/CD (E9, E10) — in progress
+- **E10** PR #1 validate run `36706581781` (success); merge run `36706651209`: validate, deploy-dev,
+  deploy-prod all success after the bootstrap fix (first deploy-prod attempt failed on the two
+  trigger targets; prod setup run `962059267652084` created them; failed job re-run passed).
+- Prod jobs and pipeline exist without the `[dev ...]` prefix; `prd_*` schemas exist.
+- Screenshots still to add: PR checks, the Actions run (both attempts), prod job list.
+- **E9** prod build run `1023214544527567`, trigger FILE_ARRIVAL, SUCCESS; release run
+  `20065706761208`, trigger TABLE (table update), SUCCESS, started 14 s after certification.
+  GBFS run `622960035711191`, trigger PERIODIC. Screenshots of both run pages still to add.
 
 ## Day 4
 

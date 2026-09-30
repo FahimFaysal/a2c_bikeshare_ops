@@ -103,12 +103,11 @@ resources:
             parameters:
               release_table: "${var.catalog}.${var.env}_ops.release"
               status_table: "${var.catalog}.${var.env}_ops.release_status"
-        # Day 5: add the dashboard task once resources/dashboard.yml exists
-        # - task_key: refresh_dashboard
-        #   depends_on: [{task_key: release_summary}]
-        #   dashboard_task:
-        #     dashboard_id: ${resources.dashboards.client_dashboard.id}
-        #     warehouse_id: ${var.warehouse_id}
+        - task_key: refresh_dashboard
+          depends_on: [{task_key: release_summary}]
+          dashboard_task:
+            dashboard_id: ${resources.dashboards.client_dashboard.id}
+            warehouse_id: ${var.warehouse_id}
 
     weather_job:
       # time-based: poll the REST source and check pipeline health daily
