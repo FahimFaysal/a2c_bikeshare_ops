@@ -1,0 +1,9 @@
+# resources/dashboard.yml — the client dashboard as code
+resources:
+  dashboards:
+    client_dashboard:
+      display_name: "A2 bike-share operations (${var.env})"
+      file_path: ../src/dashboards/client_dashboard.lvdash.json
+      warehouse_id: ${var.warehouse_id}
+      dataset_catalog: ${var.catalog}      # unqualified table names in the datasets resolve here,
+      dataset_schema: ${var.env}_gold      # so the same file serves dev_gold and prd_gold

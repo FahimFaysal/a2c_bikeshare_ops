@@ -42,3 +42,10 @@ targets:
       env: prd
       gbfs_pause: UNPAUSED
       # set to PAUSED and redeploy after 8+ hours of snapshots
+    # Target override (not a variable): a setting that exists only in prod is merged over the
+    # shared job definition. The client is told when a release is published; dev stays quiet.
+    resources:
+      jobs:
+        release_job:
+          email_notifications:
+            on_success: ["${var.notify_email}"]
