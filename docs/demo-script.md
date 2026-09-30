@@ -1,4 +1,4 @@
-# Demo script — Assignment 2C
+# Demo script — Assignment 2C (GitHub version)
 
 Draft outline; filled in during Day 5 (Task 5.5) once the dashboard and governance work exist to
 demo. Structure follows the assignment's audience split: a business walkthrough for the client,
