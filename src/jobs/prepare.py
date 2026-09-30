@@ -5,6 +5,8 @@ import re
 import shutil
 import zipfile
 
+from pyspark.sql import functions as F
+
 dbutils.widgets.text("catalog", "workspace")
 dbutils.widgets.text("env", "dev")
 CAT, ENV = dbutils.widgets.get("catalog"), dbutils.widgets.get("env")
@@ -26,6 +28,7 @@ for f in sorted(dbutils.fs.ls(ZIP_DIR), key=lambda f: f.name):
     local_zip = f"/tmp/{f.name}"
     shutil.copyfile(f"{ZIP_DIR}/{f.name}", local_zip)
     # Volumes are readable as local paths
+    registered = []
     with zipfile.ZipFile(local_zip) as zf:
         members = sorted(n for n in zf.namelist()
                           if n.lower().endswith(".csv") and not n.startswith("__MACOSX"))
@@ -37,12 +40,18 @@ for f in sorted(dbutils.fs.ls(ZIP_DIR), key=lambda f: f.name):
             with open(local_csv, "rb") as fh:
                 expected = sum(1 for _ in fh) - 1
                 # data rows = lines minus the header
-            dbutils.fs.cp(f"file:{local_csv}", f"{CSV_DIR}/{out_name}")
+            shutil.copyfile(local_csv, f"{CSV_DIR}/{out_name}")
+            # overwrites: a retry after a crash re-lands the same name with the same content
             os.remove(local_csv)
-            # TODO: what happens if the run dies between the copy above and the INSERT below? Make it safe.
-            spark.sql("INSERT INTO IDENTIFIER(:t) VALUES (:ds, :z, :c, :p, :n, current_timestamp())",
-                      args={"t": MANIFEST, "ds": system, "z": f.name, "c": out_name, "p": period, "n": expected})
+            registered.append((system, f.name, out_name, period, expected))
             print(f"{f.name} -> {out_name}: {expected:,} rows")
+    # Crash safety: a zip is skipped once it is in the manifest, so all its CSVs are registered in ONE
+    # commit after every copy succeeded. A run that dies earlier leaves no manifest row and is redone.
+    if registered:
+        (spark.createDataFrame(registered, "dataset string, landed_file string, unpacked_file string, "
+                                           "period string, expected_rows bigint")
+         .withColumn("registered_at", F.current_timestamp())
+         .write.mode("append").saveAsTable(MANIFEST))
     os.remove(local_zip)
     periods.add(period)
 

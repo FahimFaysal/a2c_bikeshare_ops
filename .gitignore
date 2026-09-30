@@ -4,3 +4,13 @@ __pycache__/
 *.pyc
 .databrickscfg
 .databricks/
+.idea/
+
+# assignment brief and working notes (internal material, not for a public repo)
+Databricks_Assignment_*.html
+pomt.txt
+SETUP_STEPS.txt
+
+# local credentials, never committed
+.env
+*.secret
