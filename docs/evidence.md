@@ -147,10 +147,27 @@ Run 2026-09-30, dev. Task-by-task table in `README.md` → "Task 3.1".
 -
 
 ### Task 5.2 — Row filter / column mask
--
+Dev rehearsal 2026-09-30 (prod proof follows once the backfill has finished). Same query on
+`dev_gold.gold_trip_detail_recent`, entitlement row of the running user:
+- State 1 (`*`, sensitive = true): sample ride `0000C966ED0B7397`, avg latitude 40.732402, max 40.75453.
+- State 2 (`JC`, sensitive = false): sample ride `id_00026b012d3a` (pseudonymised), avg 40.732363,
+  max 40.755 (rounded to 3 decimals).
+- State 3 (back to `*`, true): identical to state 1.
+Limit of the dev data: its last 30 days hold only Jersey City rows, so the row filter could not hide
+New York there; the prod proof must show both systems.
 
 ### Task 5.3 — ABAC
--
+Dev rehearsal 2026-09-30 on `dev_gold` (prod run follows the backfill).
+- Governed tags `sensitivity` (financial, restricted, location) and `access_scope` (partner) created with SQL.
+- `information_schema.column_tags`: `lat`/`lng` tagged `location` on `gold_station_flow` and
+  `gold_station_health`; `system` tagged `partner` on the five Gold objects other than
+  `gold_trip_detail_recent`.
+- `SHOW POLICIES ON SCHEMA workspace.dev_gold`: `generalise_locations` (COLUMN_MASK) and
+  `partner_rows` (ROW_FILTER).
+- `gold_demand_hourly`: full access NYC 2,030,942 + JC 200,057 trips; as JC without the sensitive
+  flag only JC 200,057. `gold_station_flow` avg/max latitude 40.743217/40.8863 in full access;
+  as the partner 252 JC rows only, max latitude 40.772 (rounded).
+- Not yet checked: whether tags survive a pipeline refresh (needs a refresh of the dev pipeline).
 
 ### Task 5.4 — Dashboard
 -
