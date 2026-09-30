@@ -8,7 +8,7 @@ actual command/output captured — nothing is written ahead of verification.
 | # | Evidence | Task | Status |
 |---|---|---|---|
 | E1 | Smoke-test results | 1.1 | done — README "Task 1.1" |
-| E2 | Reconciliation for every period | 4.1 | |
+| E2 | Reconciliation for every period | 4.1 | done — below; screenshot to add |
 | E3 | Schema-evolution event | 2.1 | done — below; screenshot to add |
 | E4 | Expectation metrics | 2.2 | done — below; screenshot to add |
 | E5 | COPY INTO second run = 0 rows | 1.3 | done — below |
@@ -126,8 +126,14 @@ Run 2026-09-30, dev. Task-by-task table in `README.md` → "Task 3.1".
 
 ## Day 4
 
-### Task 4.1 — Backfill
--
+### Task 4.1 — Backfill (E2)
+Run 2026-09-30, prod. Full 28-row table in `README.md` → "Task 4.1".
+- **E2** `prd_ops.reconciliation`: 28 of 28 period/system rows OK. Bronze 55,789,305 = clean 55,774,740
+  + quarantine 14,565; `silver_trips` 55,774,718 (22 duplicates removed); 11 releases; 0 incidents.
+- 11 build runs, all FILE_ARRIVAL and SUCCESS, 6,057 s in total; slowest `943066878271874` (1,687 s)
+  caused by Free Edition serverless `RESOURCE_EXHAUSTED` and five automatic pipeline retries.
+- May 2024 JC quarantine 2.1%: 1,997 trips under one minute.
+- Screenshot still to add: `prd_ops.reconciliation` in the SQL editor.
 
 ### Task 4.2 — Tuning
 -

@@ -150,7 +150,7 @@ variables, job parameters, or pipeline configuration.
 - [ ] **3.3 CI/CD** — Git folder branch/PR/conflict, bundle targets, GitHub Actions, end-to-end prod run.
 
 ### Day 4 tasks
-- [ ] **4.1 Backfill full volume through prod** — remaining 13 months, >50M Silver rows.
+- [x] **4.1 Backfill full volume through prod** — done; see [Task evidence log](#task-41--backfill-the-full-volume-through-prod).
 - [ ] **4.2 Tuning experiment with real numbers** — perf lab parts 1–3, ≥7 measured rows.
 - [ ] **4.3 Skew, spill and failures on purpose** — query profile before/after, repair run.
 - [ ] **4.4 Layout: partitioning vs Liquid Clustering** — file/byte/pruning comparison.
@@ -596,6 +596,69 @@ different settings over the shared definition for one target only.
 
 Still to do (workspace UI): Git folder branch `feature/gold-kpis` with a PR, the merge-conflict
 exercise, and pausing GBFS through a PR after 8+ hours of snapshots.
+
+### Task 4.1 — Backfill the full volume through prod
+
+`tools/drop_files.py --env prd --batch 6 --interval 1200` delivered the remaining 26 zips after the
+February drop (11:44 to 14:22 UTC on 2026-09-30). Each drop fired the file-arrival trigger; runs
+that arrived while one was active queued (`max_concurrent_runs: 1`). 11 build runs in total,
+all SUCCESS, all trigger FILE_ARRIVAL, 6,057 s of run time (runs 248 s to 1,687 s).
+
+Totals from `prd_ops.reconciliation`: Bronze **55,789,305** = Silver clean 55,774,740 + quarantine
+14,565. The de-duplicated `prd_lakehouse.silver_trips` holds **55,774,718** rows (22 duplicate
+`ride_id`s removed; 0 duplicate keys remain). 11 releases in `prd_ops.release`, 0 rows in
+`prd_ops.incidents`. All 28 period/system rows are OK:
+
+| Period | System | Expected (manifest) | Bronze | Silver clean | Quarantine | Status |
+|---|---|---|---|---|---|---|
+| 2024-05 | JC | 97,479 | 97,479 | 95,432 | 2,047 | OK |
+| 2024-05 | NYC | 4,133,961 | 4,133,961 | 4,132,843 | 1,118 | OK |
+| 2024-06 | JC | 111,115 | 111,115 | 111,058 | 57 | OK |
+| 2024-06 | NYC | 4,783,576 | 4,783,576 | 4,782,160 | 1,416 | OK |
+| 2024-07 | JC | 112,443 | 112,443 | 112,387 | 56 | OK |
+| 2024-07 | NYC | 4,722,896 | 4,722,896 | 4,721,591 | 1,305 | OK |
+| 2024-08 | JC | 106,451 | 106,451 | 106,413 | 38 | OK |
+| 2024-08 | NYC | 4,603,575 | 4,603,575 | 4,602,375 | 1,200 | OK |
+| 2024-09 | JC | 115,558 | 115,558 | 115,531 | 27 | OK |
+| 2024-09 | NYC | 4,997,898 | 4,997,898 | 4,996,775 | 1,123 | OK |
+| 2024-10 | JC | 118,307 | 118,307 | 118,279 | 28 | OK |
+| 2024-10 | NYC | 5,150,054 | 5,150,054 | 5,149,199 | 855 | OK |
+| 2024-11 | JC | 85,294 | 85,294 | 85,274 | 20 | OK |
+| 2024-11 | NYC | 3,710,134 | 3,710,134 | 3,709,232 | 902 | OK |
+| 2024-12 | JC | 54,833 | 54,833 | 54,817 | 16 | OK |
+| 2024-12 | NYC | 2,311,171 | 2,311,171 | 2,310,767 | 404 | OK |
+| 2025-01 | JC | 50,611 | 50,611 | 50,590 | 21 | OK |
+| 2025-01 | NYC | 2,124,475 | 2,124,475 | 2,124,187 | 288 | OK |
+| 2025-02 | JC | 45,255 | 45,255 | 45,247 | 8 | OK |
+| 2025-02 | NYC | 2,031,257 | 2,031,257 | 2,030,942 | 315 | OK |
+| 2025-03 | JC | 73,293 | 73,293 | 73,280 | 13 | OK |
+| 2025-03 | NYC | 3,168,271 | 3,168,271 | 3,167,722 | 549 | OK |
+| 2025-04 | JC | 81,553 | 81,553 | 81,530 | 23 | OK |
+| 2025-04 | NYC | 3,724,596 | 3,724,596 | 3,723,968 | 628 | OK |
+| 2025-05 | JC | 93,227 | 93,227 | 93,198 | 29 | OK |
+| 2025-05 | NYC | 4,325,553 | 4,325,553 | 4,324,604 | 949 | OK |
+| 2025-06 | JC | 97,124 | 97,124 | 97,086 | 38 | OK |
+| 2025-06 | NYC | 4,759,345 | 4,759,345 | 4,758,253 | 1,092 | OK |
+
+Each NYC month is within rounding of the assignment's row-count reference (for example May 2024
+4,133,961 against 4.13M, October 2024 5,150,054 against 5.1M, February 2025 2,031,257 against 2.03M).
+The published files hold the trips the system reports, so the file count is the source of truth.
+
+Findings worth stating:
+- **May 2024 Jersey City quarantined 2.1%** (2,047 of 97,479), the only month above the gate's 2.0%
+  limit. 1,997 of those are trips under one minute (shortest 0.0 minutes), 50 over 24 hours, 8 ending
+  before they start. The publisher's under-60-second filter was evidently not applied to this
+  file, so the duration floor does its job here. The gate did not trip because it judges each
+  run: that run also held NYC May, so the combined rate was 0.07%.
+- **Slowest run: `943066878271874`, 1,687 s against about 300–450 s for a typical run.** Cause:
+  Free Edition refused to start serverless compute for the pipeline
+  (`RESOURCE_EXHAUSTED: You've hit the limit for severless compute for free usage`). The pipeline
+  retried by itself (cause `RETRY_ON_FAILURE`) five times with growing waits and succeeded on the
+  sixth attempt; the same thing happened shortly before (12:40, two attempts) and after (13:19,
+  five attempts). It was not data volume, not schema evolution and not a full refresh. The failures
+  coincided with other serverless work running at the same time (the 30-minute GBFS job and my own
+  interactive SQL), which is the likely trigger but was not proven. Lesson for the README: on Free
+  Edition, keep other compute idle during a backfill.
 
 #### What this means for the rest of the build
 - No REST host used by this variant is blocked from serverless notebooks — Tasks 1.3/1.4 (COPY INTO,
