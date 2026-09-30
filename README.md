@@ -136,17 +136,17 @@ variables, job parameters, or pipeline configuration.
 ### Day 1 tasks
 - [x] **1.1 Environment & smoke test** — done; see [Task evidence log](#task-11--environment--smoke-test).
 - [x] **1.2 Repository and bundle skeleton** — done; see [Task evidence log](#task-12--repository-and-bundle-skeleton).
-- [ ] **1.3 Land first period + COPY INTO reference data** — `drop_files.py --env dev --match 202502`, `ref_station_information`.
-- [ ] **1.4 REST ingestion with secrets** — NOAA token in secret scope `a2`, `weather_rest.py`, `gbfs_poll.py`.
+- [x] **1.3 Land first period + COPY INTO reference data** — done; see [Task evidence log](#task-13--land-the-first-period-and-copy-into-reference-data).
+- [x] **1.4 REST ingestion with secrets** — done except the `[REDACTED]` screenshot; see [Task evidence log](#task-14--rest-ingestion-with-a-secret-scope).
 
 ### Day 2 tasks
-- [ ] **2.1 Bronze with Auto Loader** — `bronze_trips`, `bronze_station_status`, `bronze_weather`; schema-evolution drill.
-- [ ] **2.2 Silver: conform, clean, validate, quarantine, de-duplicate** — 7 documented rules, quarantine table, dedup MV.
-- [ ] **2.3 Gold objects for the business questions** — 6 Gold MVs, `CLUSTER BY`, governed object declared.
+- [x] **2.1 Bronze with Auto Loader** — done; see [Task evidence log](#task-21--bronze-with-auto-loader).
+- [x] **2.2 Silver: conform, clean, validate, quarantine, de-duplicate** — done; see [Task evidence log](#task-22--silver-conform-clean-validate-quarantine-de-duplicate).
+- [x] **2.3 Gold objects for the business questions** — done in dev; see [Task evidence log](#task-23--gold-objects-for-the-business-questions).
 
 ### Day 3 tasks
-- [ ] **3.1 Build job: DAG, control flow, retries, alerts** — prepare → has_new → build → reconcile_each → quality_check → gate → certify/raise_incident.
-- [ ] **3.2 Three kinds of trigger** — file-arrival, table-update, cron; proven in prod.
+- [x] **3.1 Build job: DAG, control flow, retries, alerts** — done in dev (e-mail receipt to confirm); see [Task evidence log](#task-31--the-build-job).
+- [ ] **3.2 Three kinds of trigger** — trigger table written ([Task evidence log](#task-32--three-kinds-of-trigger)); proven in prod in 3.3.
 - [ ] **3.3 CI/CD** — Git folder branch/PR/conflict, bundle targets, GitHub Actions, end-to-end prod run.
 
 ### Day 4 tasks
@@ -195,8 +195,8 @@ a2c_bikeshare_ops/
 └── docs/  architecture.png  evidence.md  demo-script.md  exam-notes.md
 ```
 
-This layout is now fully populated (all files listed above exist); the remaining Day 1 work is
-`bundle validate`/`deploy -t dev` and `setup_job`, then landing the first data period.
+Files marked Day 5 (`resources/dashboard.yml`, `src/governance/*.sql`, the dashboard export,
+`docs/architecture.png`) are added on Day 5; everything else exists.
 
 ## 6. Mandatory vs optional, limitations, risks
 
@@ -297,6 +297,260 @@ SHOW VOLUMES IN workspace.dev_landing    -> raw
 SELECT * FROM workspace.dev_ops.entitlements
   -> fahim.faysal@bjitgroup.com | *  | true
 ```
+
+Still open from Task 1.2: the workspace **Git folder** has not been created yet (it needs a GitHub
+token under Settings → Linked accounts); it is required for Task 3.3.
+
+### Task 1.3 — Land the first period and COPY INTO reference data
+
+Run on 2026-09-30 against `dev`.
+
+| Step | Command | Result |
+|---|---|---|
+| Drop the dev slice | `tools/drop_files.py --env dev --match 202502` | `202502-citibike-tripdata.zip` (396 MB) and `JC-202502-citibike-tripdata.csv.zip` (2 MB) in `raw/tripdata_zip/` |
+| Poll GBFS once | `databricks bundle run -t dev gbfs_job` | `reference/station_information_20260930T080117Z.json`, `gbfs_status/station_status_20260930T080117Z.json` |
+| COPY INTO, run 1 | `databricks bundle run -t dev setup_job` | `ref_station_information`: 1 row (one row per snapshot file) |
+| COPY INTO, run 2 | same command again | still 1 row; no new table version was written |
+| `prepare.py` by hand | one-off serverless run `479485360658836` | 4 CSVs unpacked and registered (below) |
+
+Table history after both runs (`DESCRIBE HISTORY workspace.dev_lakehouse.ref_station_information`):
+
+```
+version  operation     operationMetrics
+0        CREATE TABLE  {}
+1        COPY INTO     {"numFiles":"1","numOutputRows":"1", ...}
+```
+
+The second run loaded nothing because COPY INTO keeps a record, per target table, of the files it
+has already loaded and skips them; only a new snapshot file (tomorrow's) would add a row.
+
+`workspace.dev_ops.file_manifest` after `prepare`:
+
+| dataset | landed_file | unpacked_file | period | expected_rows |
+|---|---|---|---|---|
+| jc | JC-202502-citibike-tripdata.csv.zip | JC_2025-02_1.csv | 2025-02 | 45,255 |
+| nyc | 202502-citibike-tripdata.zip | NYC_2025-02_1.csv | 2025-02 | 1,000,000 |
+| nyc | 202502-citibike-tripdata.zip | NYC_2025-02_2.csv | 2025-02 | 1,000,000 |
+| nyc | 202502-citibike-tripdata.zip | NYC_2025-02_3.csv | 2025-02 | 31,257 |
+
+NYC February 2025 = 2,031,257 file rows against the 2.03M system rides in the assignment's
+row-count reference.
+
+Change to the starter `prepare.py` (its TODO): a zip is skipped once any of its CSVs is in the
+manifest, so registering CSV by CSV could leave a multi-CSV zip half-registered after a crash and
+never finished. All CSVs of a zip are now registered in one Delta commit after every copy
+succeeded, and the copy overwrites, so a retry redoes the whole zip.
+
+### Task 1.4 — REST ingestion with a secret scope
+
+Run on 2026-09-30 against `dev`. Secret scope `a2` holds the key `noaa_token`, stored from the
+laptop with `databricks secrets put-secret`; the notebook reads it with `dbutils.secrets.get`.
+
+- `weather_rest.py` one-off serverless run `1026475686969055` (task run `714733142701311`, SUCCESS)
+  landed two raw responses in `raw/weather/`, one per CDO one-year window:
+  `GHCND_USW00094728_20240501_20241231_20260930T090408Z.json` (122 KB) and
+  `GHCND_USW00094728_20250101_20250630_20260930T090408Z.json` (90 KB).
+- `gbfs_poll.py` (no key, feed URLs from GBFS autodiscovery) landed
+  `gbfs_status/station_status_20260930T080117Z.json` in Task 1.3.
+- Both hosts are reachable from serverless (Task 1.1), so no laptop fallback was needed.
+- `git grep -i token` matches only code and documentation that mention the word; a pattern search
+  for a Databricks PAT (`dapi…`) or a 32-letter key finds nothing in the repository.
+- To add: screenshot of the notebook output `token: [REDACTED]` (E6), then delete the `print` line.
+
+#### Ingestion decisions
+
+| Source | Method | Why |
+|---|---|---|
+| Trip zips (NYC, JC) | Laptop simulator → Volume; `prepare` unzips; Auto Loader (CSV) into a streaming table | Many large files arriving over time; needs incremental discovery, schema hints and evolution. Auto Loader cannot read zips, so `prepare` unpacks and counts rows for reconciliation. |
+| GBFS `station_information` | REST notebook → Volume → `COPY INTO` | One small snapshot a day, reference data; a re-runnable idempotent SQL batch load is enough. |
+| GBFS `station_status` | REST notebook every 30 min → Volume → Auto Loader (JSON) | A steady stream of small files; the public feed has no push, so polling plus incremental file ingestion is the closest to streaming. |
+| NOAA daily weather | REST notebook with a secret-scope token → Volume → Auto Loader (JSON) | No managed connector for CDO; token must stay out of code; raw responses are kept so Silver can be rebuilt. |
+| Managed connector (Lakeflow Connect) | Not used | No source here has one; database connectors are unavailable on Free Edition (stretch goal S1 only). |
+
+### Task 2.1 — Bronze with Auto Loader
+
+Run on 2026-09-30 in `dev` (`databricks bundle run -t dev lakehouse`, update `df5c4215`, COMPLETED).
+
+Bronze rows per `_source_file` against the manifest (the manifest count is `prepare`'s own line
+count of each CSV), and the first Silver balance:
+
+| File | Expected | Bronze | Silver clean | Quarantine | Bronze = expected | Clean + quarantine = Bronze |
+|---|---|---|---|---|---|---|
+| JC_2025-02_1.csv | 45,255 | 45,255 | 45,247 | 8 | yes | yes |
+| NYC_2025-02_1.csv | 1,000,000 | 1,000,000 | 999,855 | 145 | yes | yes |
+| NYC_2025-02_2.csv | 1,000,000 | 1,000,000 | 999,857 | 143 | yes | yes |
+| NYC_2025-02_3.csv | 31,257 | 31,257 | 31,230 | 27 | yes | yes |
+
+Bronze schema: `start_station_id` and `end_station_id` are `string` (schema hints), `started_at` /
+`ended_at` are `string` (parsed in Silver), coordinates `double`. `_rescued_data` is NULL for every row.
+Other tables after the run: `silver_station_status` 2,520 rows from one snapshot, `dim_station` 2,520
+stations, `silver_weather_daily` 426 days (2024-05-01 to 2025-06-30 is 426 days).
+
+One failure on the first run, fixed: `silver_weather_daily` failed to resolve with
+`DATATYPE_MISMATCH ... "results" has the type "STRING"`. Auto Loader reads JSON without
+`inferColumnTypes` as strings, so the nested `results` array arrives in Bronze as a JSON string.
+Bronze was left as delivered; Silver now parses it with `from_json` and an explicit schema.
+
+#### Schema-evolution drill
+
+`tools/drift_drill.py` (one-off run `661980989091322`) landed `JC_2025-02_1_drift.csv`: 1,000 real
+rows plus a new column `feed_version`.
+
+| Question | Observed |
+|---|---|
+| What failed | Update `6e8469`: flow `bronze_trips` stopped with `UNKNOWN_FIELD_EXCEPTION.NEW_FIELDS_IN_FILE ... [feed_version]` (`FLOW_SCHEMA_CHANGED`); the update was cancelled. |
+| What restarted it | The pipeline itself: update `89a88c` "started by SCHEMA_CHANGE" two seconds later and completed. The assignment expects a manual restart in development mode; on this workspace the restart was automatic. A manual `bundle run` issued meanwhile was rejected with "An active update already exists". |
+| Where the new column appears | `bronze_trips.feed_version`: 1,000 non-NULL values in the drill file, NULL for all 2,076,512 earlier rows. Existing column types did not change. |
+| What is in `_rescued_data` | Nothing (0 non-NULL rows). With `addNewColumns` the new field becomes a real column; `_rescued_data` would only hold values that do not fit the schema (type or case mismatches). |
+| Effect downstream | `silver_trips_clean` 2,077,189 rows, `silver_trips` 2,076,189: de-duplication on `ride_id` removed exactly the 1,000 drill rows. The real files contain 0 duplicate `ride_id`s. Reconciliation ignores the drill file because it is not in the manifest. |
+
+### Task 2.2 — Silver: conform, clean, validate, quarantine, de-duplicate
+
+Run on 2026-09-30 in `dev` on February 2025 (2,076,512 rows in the four real files).
+
+#### Bronze profile (before choosing thresholds)
+
+| Check | Result |
+|---|---|
+| `ride_id` | 0 NULL; 2,076,512 distinct of 2,076,512, so the publisher's id is unique in this period |
+| `started_at` / `ended_at` | 0 unparseable; starts range 2025-01-31 09:26 to 2025-02-28 23:58 |
+| Duration (minutes) | min 1.017, p1 1.40, median 7.25, p99 42.28, max 1,500.0; 0 rows under 1 minute, 0 with end before start, 323 over 24 hours (all between 1,446 and 1,500) |
+| `member_casual` | only `member` and `casual` |
+| `rideable_type` | `classic_bike` 630,221; `electric_bike` 1,446,291 |
+| Missing start station id | 673, all e-bikes (the same 673 rows have no start coordinates) |
+| Missing end station id | 4,904: 4,592 e-bikes, 312 classic bikes |
+| Start coordinates outside the area box | 15 (extreme values lat 34.03, lng −118.25, which is not the New York area) |
+| Trips starting in another month than the file's | 275 (started in January, ended in February) |
+
+The bottom of the duration distribution starts at about one minute because the publisher already
+removes trips under 60 seconds; the 1-minute floor therefore removes nothing here and only guards
+against a change in the publisher's filter.
+
+#### Rules
+
+| Rule | Behaviour | Threshold | Reason | Rows affected (Feb 2025) |
+|---|---|---|---|---|
+| `has_source_file` | fail | `_source_file IS NOT NULL` | Without it a row cannot be reconciled to a file; a structural fault should stop the update | 0 |
+| `ride_id_present` | drop | not NULL | No key, no trip; de-duplication needs it | 0 |
+| `ended_after_started` | drop | `ended_at > started_at` | Impossible trip | 0 |
+| `duration_1min_to_24h` | drop | 1 to 1,440 minutes | Over 24 h is a lost or unreturned bike, an operations matter, and would distort duration statistics | 323 (0.016%) |
+| `member_type_valid` | drop | `member` or `casual` | Every business question splits by rider type | 0 |
+| `period_matches_file` | warn | trip month = file month | Real trips that cross the month boundary; kept and counted | 275 |
+| `coords_in_area` | warn | lat 40.4–41.0, lng −74.3 to −73.6 | GPS glitches and missing coordinates; kept and counted | 688 (673 NULL + 15 outside) |
+| `stations_present` | warn | both station ids not NULL | Dockless e-bike starts and ends are real trips; excluded only from station-level questions | 5,422 |
+
+Counts are the expectation metrics of update `df5c42` in the pipeline event log. Drop rules are
+wrapped in `coalesce(rule, false)`, so a NULL fails the rule and the row goes to quarantine instead
+of vanishing: clean 2,076,189 + quarantine 323 = Bronze 2,076,512. All 323 quarantined rows fail
+`duration_1min_to_24h` only. The quarantine share (0.016%) is far below the gate's 2.0% limit.
+
+De-duplication: `silver_trips` (materialized view) removes 0 rows from the real files and exactly
+the 1,000 rows of the drift-drill file.
+
+#### Fail behaviour, proven once
+
+A temporary `expect_or_fail("DEMO_every_trip_has_start_station", "start_station_id IS NOT NULL")`
+was added to `silver_trips_clean` and the table fully refreshed. Update `e68ced` FAILED with
+`EXPECTATION_VIOLATION ... Violated expectations: 'DEMO_every_trip_has_start_station'` and the
+offending row in the message (ride `28F90869755C48C9`, an e-bike with no start station). Nothing
+was written: the table had 0 rows afterwards, because the full refresh had cleared it and the
+failed update committed no data. The rule was removed and update `6ba4ad` rebuilt the table to
+2,077,189 rows. Outside a full refresh, a failed update leaves the previous contents in place.
+
+### Task 2.3 — Gold objects for the business questions
+
+Run on 2026-09-30 in `dev`: all six Gold objects refresh. Trip totals in `gold_demand_hourly`,
+`gold_weather_demand` and `gold_ride_behaviour` each sum to 2,076,189, the `silver_trips` row count.
+Every object reads Silver only; `gold_station_health` recomputes demand from `silver_trips` rather
+than reading `gold_station_flow`.
+
+| Object | Grain | Why a materialized view |
+|---|---|---|
+| `gold_demand_hourly` (CLUSTER BY `start_date`) | date × hour × system × rider type × bike type | An aggregate with a median over all trips; it must reflect every change in Silver, including de-duplication, so it cannot be an append-only streaming table. Stored because the dashboard reads it often. |
+| `gold_weather_demand` | date × system | A join of daily trips to weather, and weather values are re-fetched and can change; a materialized view recomputes the affected days. |
+| `gold_station_flow` | system × station × weekday peak window | Averages per weekday depend on the whole history (the number of weekdays grows with each month). |
+| `gold_ride_behaviour` | system × month × bike type × rider type | Percentiles cannot be maintained by appending; they need the full group. |
+| `gold_station_health` | system × station | Shares over all snapshots joined to demand and the station dimension, which is replaced daily. |
+| `gold_trip_detail_recent` (CLUSTER BY `started_at`, row filter + masks) | trip, last 30 days of the data | The window moves with `max(started_at)`, so old rows must leave; the filter and masks are part of the definition so every refresh keeps them. |
+
+A plain view was not used for any of them: it would recompute 2M (later 55M) rows on every
+dashboard query. A streaming table was not used because none of these results is append-only.
+
+Definitions chosen (stated so the numbers can be checked):
+- Peak windows are weekdays (Mon–Fri) 07:00–10:00 and 16:00–19:00. A departure is counted at the
+  trip's start time, an arrival at its end time. Averages divide by the number of weekdays with
+  trips in the data for that system (21 in the dev slice).
+- Net flow = arrivals − departures; negative means the station drains.
+- Rain day = `prcp` ≥ 5 mm at Central Park. Temperature bands use the daily maximum:
+  below 5 °C, 5–15, 15–25, 25 and above.
+- Station coordinates come from `dim_station`; stations missing there use the average trip coordinate.
+
+GBFS to trip-file station join: the GBFS `station_id` is a UUID; the trip files' station id equals
+the GBFS `short_name`. Match rate of trip start stations against today's `dim_station`:
+NYC 2,096 of 2,240 stations (96.7% of trips), JC 80 of 83 stations (95.3% of trips). The unmatched
+ones existed in February 2025 but are not in the 2026-09-30 station list. `gold_station_health`
+keeps only matched stations (2,104 rows). `is_renting` / `is_returning` are encoded 1/0 in this feed;
+90 of 2,520 stations were not renting and returning in the snapshot and are excluded.
+
+Trips that cannot be placed at a station (dev slice): 673 without a start station (all e-bikes)
+and 4,593 without an end station (4,591 e-bikes, 2 classic).
+
+First-draft business queries and their dev results are in `docs/business-questions.md`. They are
+drafts on one month and one GBFS snapshot; the final answers come from `prd` on Day 5.
+
+### Task 3.1 — The build job
+
+Run on 2026-09-30 in `dev`, each time after dropping one new file with the simulator.
+
+| | Green run | Forced incident run |
+|---|---|---|
+| File dropped | `JC-202503` | `JC-202504` |
+| Command | `bundle run -t dev build_job` | `bundle run -t dev build_job --params max_quarantine_pct=-1` |
+| Run id | `163219437441288` | `555298946603170` |
+| Result | SUCCESS, 343 s | FAILED, 474 s |
+| `prepare` | SUCCESS (44 s) | SUCCESS (25 s) |
+| `has_new` | true | true |
+| `build` (pipeline) | SUCCESS (253 s) | SUCCESS (264 s) |
+| `reconcile_each` (for-each) | SUCCESS, 1 iteration | SUCCESS, 1 iteration |
+| `quality_check` | SUCCESS | SUCCESS |
+| `gate` | true | false |
+| `certify` | SUCCESS | EXCLUDED |
+| `raise_incident` | EXCLUDED | FAILED |
+
+`ops.reconciliation`: 2025-03 jc expected 73,293 = Bronze 73,293 = Silver 73,280 + quarantine 13, OK;
+2025-04 jc expected 81,553 = Bronze 81,553 = Silver 81,530 + quarantine 23, OK.
+`ops.release` has one row (run `163219437441288`, periods `["2025-03"]`, "passed quality gate").
+`ops.incidents` records run `555298946603170`: "quality gate failed (quarantine 0.028%, see reconciliation)".
+The forced run failed only because the threshold was −1; its data reconciled.
+
+Found and fixed: `raise_incident` ran twice in the forced run (attempts 0 and 1) and wrote two
+incident rows, although no retry is configured on it. Serverless jobs retry failed tasks by
+themselves (auto-optimization). The task now sets `disable_auto_optimization: true`, and the
+notebook uses `MERGE` on `run_id` so a repeat can never duplicate an incident. The fix is deployed;
+it is exercised by the next forced failure (Task 4.3).
+
+Own check added to `quality_check.py` (the starter's TODO): the de-duplicated `silver_trips` must
+contain no duplicate `ride_id`, otherwise the gate fails.
+
+Retries:
+
+| Task | Setting | What it does |
+|---|---|---|
+| `prepare` | `max_retries: 2`, `min_retry_interval_millis: 60000` | Up to two more attempts, one minute apart: covers a transient Volume or compute error. Safe because `prepare` skips zips already in the manifest and registers a zip in one commit. |
+| `build` | `max_retries: 1`, `min_retry_interval_millis: 120000` | One more pipeline update after two minutes: this is what restarts the pipeline after a schema-evolution stop. |
+| `raise_incident` | no retry, auto-optimization disabled | A deliberate failure must fail once and send one e-mail. |
+
+### Task 3.2 — Three kinds of trigger
+
+Defined in `resources/jobs.yml`. In `dev` they all show as paused (`mode: development` pauses every
+trigger and schedule); they are proven in `prod` in Task 3.3.
+
+| Job | Trigger | Why this one | What the alternative would do |
+|---|---|---|---|
+| `build_job` | File arrival on `raw/tripdata_zip/` (waits 120 s after the last change, at least 300 s between runs) | The publisher releases a month when it is ready, not on a clock. | A cron-scheduled build either runs before the files land (an empty run, or a partial one if an upload is in flight) or hours after (stale dashboard), and spends compute on days with nothing new. |
+| `release_job` | Table update on `ops.release` | The release summary and dashboard refresh must follow a certified release, never precede it. | A schedule guesses when the build finishes: too early publishes the previous state, and it cannot tell a certified run from a failed gate. Chaining it as a task of the build job would tie a consumer-facing step to the build's run. |
+| `weather_job` | Cron, daily 05:30 | NOAA pushes no events; daily data only changes daily. It also runs the pipeline-SLA check, which must fire even when nothing arrives. | A file-arrival trigger has nothing to watch before the job itself fetches the file. |
+| `gbfs_job` | Cron, every 30 minutes | The public feed is poll-only; 30 minutes is the agreed sampling rate. | An event trigger is not available for a source that emits no event; polling faster multiplies job runs against the compute quota. |
 
 #### What this means for the rest of the build
 - No REST host used by this variant is blocked from serverless notebooks — Tasks 1.3/1.4 (COPY INTO,

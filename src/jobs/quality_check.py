@@ -17,11 +17,15 @@ r = rec.agg(F.count("*").alias("checks"),
             F.sum("quarantined_rows").alias("quarantined")).first()
 
 quarantine_pct = 100.0 * (r.quarantined or 0) / max(1, r.bronze or 0)
-passed = (r.checks or 0) > 0 and (r.mismatches or 0) == 0 and quarantine_pct <= MAX_Q
-# TODO: add one check of your own (e.g. no duplicate business keys in the de-duplicated Silver table)
+# Own check: the de-duplicated Silver table must hold each ride_id once, or every Gold count is inflated
+d = spark.table(f"{CAT}.{ENV}_lakehouse.silver_trips").agg(
+    (F.count("*") - F.countDistinct("ride_id")).alias("duplicate_keys")).first()
+duplicate_keys = d.duplicate_keys or 0
+passed = ((r.checks or 0) > 0 and (r.mismatches or 0) == 0 and quarantine_pct <= MAX_Q
+          and duplicate_keys == 0)
 
-print(f"checks={r.checks} mismatches={r.mismatches} quarantine={quarantine_pct:.3f}% (max {MAX_Q}%) -> "
-      f"{'PASS' if passed else 'FAIL'}")
+print(f"checks={r.checks} mismatches={r.mismatches} quarantine={quarantine_pct:.3f}% (max {MAX_Q}%) "
+      f"duplicate_keys={duplicate_keys} -> {'PASS' if passed else 'FAIL'}")
 
 dbutils.jobs.taskValues.set(key="gate", value="pass" if passed else "fail")
 dbutils.jobs.taskValues.set(key="quarantine_pct", value=round(quarantine_pct, 3))

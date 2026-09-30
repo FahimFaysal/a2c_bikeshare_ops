@@ -1,0 +1,349 @@
+PLAN REVISION — 2026-09-30 (after re-reading the assignment against the repo and the workspace)
+
+Status
+• 1.1 done. 1.2 done EXCEPT the workspace Git folder (not created; needs a GitHub token under
+  Settings -> Linked accounts). 1.3 done. 1.4 blocked on the NOAA token.
+• Download cache: 20 of 28 zips were present; the download had stopped at 202503. Resumed.
+
+Changes to the plan below
+1. Task 1.2 stays open until the Git folder exists (Task 3.3 depends on it).
+2. CI is red on every push to main because DATABRICKS_HOST / DATABRICKS_TOKEN repo secrets are not
+   set. They are set at Task 3.3, not before: the first green push deploys prod, whose GBFS job is
+   UNPAUSED and polls every 30 minutes. Until then, work on a branch (no CI runs) and merge by PR on Day 3.
+3. prepare.py TODO is done in Task 1.3 (one manifest commit per zip), not left for 3.1.
+4. docs/evidence.md is indexed E1-E16 as Section 8 requires, in addition to the per-task log.
+5. docs/exam-notes.md must answer the 27 checkpoint questions in own words (currently only a table).
+6. README must also contain: trigger table with failure mode of the alternative, access model,
+   "what I would change for a real client", "three things I learned", duration per backfill batch.
+7. Task 2.3: every Gold object reads Silver only. gold_station_health therefore recomputes demand
+   from silver_trips instead of reading gold_station_flow. Coordinate columns in gold_station_flow and
+   gold_station_health must be named lat / lng (12_abac.sql tags those names; dim_station has lon).
+8. Task 2.2/BQ4: the GBFS station_id -> trip station id join goes through dim_station.short_name;
+   the match rate is a required number.
+9. Task 3.3 / BQ4 timing: prod GBFS needs 8+ hours of 30-minute snapshots, so the prod deploy must
+   happen at least one working day before Day 5; then pause it through a PR.
+10. Task 5.2/5.3 refresh hazard: keep own entitlement at '*' whenever the pipeline refreshes.
+11. Demo follows the assignment's 5-part, 10-minute outline; pomt.txt's 12-part story goes in the README.
+12. Stretch goals are exactly S1 (Jira connector), S2 (pytest/chispa in CI), S3 (SCD2 station
+    dimension with AUTO CDC from snapshots). Only after Sections 6-8 are complete.
+
+────────────────────
+
+DAY 1 — Foundations (S1 Platform, S2 Ingestion, S5 CI/CD)
+
+Task 1.1 — Environment & smoke test
+
+1. Assignment requirement: Sign into Free Edition, configure CLI/PAT, run smoke-test notebook ( A.1 ), record outbound-host reachability, secrets, row filters, governed tags, invite, service principal; request NOAA token; start 10GB background download.
+2. Business requirement: None directly — this is the platform-capability discovery that determines which fallbacks the rest of the build must use.
+3. Databricks feature: Free Edition serverless workspace, PAT auth,  dbutils.secrets , row filters (proof-of-concept), governed tags, service principals.
+4. File(s):  tools/00_smoke_test.py  ( A.1 ), README "Environment findings" table.
+5. Dependencies: None — first task.
+6. Expected output:  databricks current-user me  returns your user; smoke-test output captured; download running in background.
+7. Evidence to capture: E1 (smoke-test results) — host reachability list, secret scope list, row-filter demo result, invite/SP/governed-tag capability notes.
+8. Client explanation: "Before building anything, we verified what this environment can and can't do, so every later design choice is grounded in fact, not assumption."
+9. Interview explanation: "Free Edition is serverless-only with a limited Spark config surface and an undocumented outbound allow-list; I ran a smoke test to discover real constraints (secrets, row filters, governed tags, SP creation) rather than assuming classic-compute capabilities."
+
+Task 1.2 — Repository and bundle skeleton
+
+1. Assignment requirement: Create GitHub repo  a2c_bikeshare_ops  with Appendix A layout (minus  dashboard.yml );  bundle validate  →  bundle deploy -t dev  →  bundle run -t dev setup_job ; create a Git folder in the workspace.
+2. Business requirement: "Client can deploy from Git with one command" and "no hard-coded dev/prd."
+3. Databricks feature: Databricks Asset Bundles ( databricks.yml ,  resources/*.yml ), Git folders, bundle variables/targets.
+4. File(s):  databricks.yml ,  resources/pipeline.yml ,  resources/jobs.yml ,  src/setup/setup_objects.py .
+5. Dependencies: Task 1.1 (PAT/CLI configured).
+6. Expected output: 4 schemas ( dev_landing/lakehouse/gold/ops ),  dev_landing.raw  volume, one row in  dev_ops.entitlements  with scope  * .
+7. Evidence to capture: Bundle validate/deploy console output, setup job green run, schema/volume listing query result.
+8. Client explanation: "The entire platform is defined as code; deploying to a new environment is a single command."
+9. Interview explanation: "One bundle, variable-driven targets ( dev / prod ) — avoids  if env == 'dev'  branching in application code; the trigger-bootstrap problem (triggers referencing tables/paths that don't exist yet) is a documented real deployment ordering issue."
+
+Task 1.3 — Land first period + COPY INTO reference data
+
+1. Assignment requirement:  drop_files.py --env dev --match 202502 ; poll GBFS once for  station_information ; load via  COPY INTO  into  ref_station_information , run twice to prove idempotency; run  prepare.py  once by hand.
+2. Business requirement: "Refresh as new data arrives" (incremental, re-runnable ingestion); dev-scale iteration to avoid burning quota.
+3. Databricks feature: Unity Catalog Volumes,  COPY INTO  (idempotent file-tracking).
+4. File(s):  tools/drop_files.py ,  src/ingest/gbfs_poll.py ,  src/ingest/load_reference.py ,  src/jobs/prepare.py .
+5. Dependencies: Task 1.2 (schemas/volume must exist).
+6. Expected output: Files in  /Volumes/workspace/dev_landing/raw/ ; second  COPY INTO  run inserts 0 rows; manifest entries from  prepare.py .
+7. Evidence to capture: E5 (COPY INTO second run = 0 rows); README "ingestion decisions" table (source → method → why).
+8. Client explanation: "Loading reference data twice by accident never duplicates records — the system remembers what it already ingested."
+9. Interview explanation: " COPY INTO  tracks loaded files per target table for exactly-once semantics; it's the right tool for a small, re-runnable batch load — Auto Loader is for continuous/high-volume incremental ingestion."
+
+Task 1.4 — REST ingestion with secrets (NOAA + GBFS)
+
+1. Assignment requirement: Create secret scope  a2 , store NOAA token, never in code; run  weather_rest.py  (paged, rate-limited REST calls) and  gbfs_poll.py  (no-key, autodiscovered feed URLs).
+2. Business requirement: "How weather affects demand" and live station feed for BQ4; tokens must never leak.
+3. Databricks feature: Databricks secret scopes ( dbutils.secrets ), REST ingestion pattern landing raw JSON to a Volume.
+4. File(s):  src/ingest/weather_rest.py ,  src/ingest/gbfs_poll.py .
+5. Dependencies: Task 1.1 (smoke test result on host reachability decides direct vs. laptop-fallback ingestion).
+6. Expected output: JSON files in  raw/weather/ , ≥1 snapshot in  raw/gbfs_status/ .
+7. Evidence to capture: E6 (secret redaction screenshot —  print(token)  shows  [REDACTED] );  git grep -i token  shows no leaked credential.
+8. Client explanation: "Credentials are stored in a secured vault the platform manages — they never appear in code, logs, or the version-control history."
+9. Interview explanation: "Secrets are read via  dbutils.secrets.get(scope,key) ; the notebook output layer auto-redacts the literal value, but the real control is the secret ACL, not the redaction display."
+
+Day 1 exam checkpoint →  docs/exam-notes.md  (COPY INTO idempotency, Auto Loader vs COPY INTO, connector vs REST ingestion, token location, compute-type fit).
+
+────────────────────
+
+DAY 2 — Declarative Pipeline: Bronze → Silver → Gold (S2 Ingestion, S3 Transformation)
+
+Task 2.1 — Bronze with Auto Loader
+
+1. Assignment requirement: One streaming table per source file type ( bronze_trips ,  bronze_station_status ,  bronze_weather ) exactly as delivered +  _source_file / _ingest_ts ; deploy/run pipeline; run the schema-evolution drift drill ( A.11 ) and document the  UnknownFieldException  → restart →  _rescued_data  behavior.
+2. Business requirement: "Refresh automatically as new data arrives"; source traceability for reconciliation.
+3. Databricks feature: Lakeflow Declarative Pipelines, Auto Loader ( cloudFiles ), schema hints (station IDs as text, not double), schema evolution ( addNewColumns ),  _rescued_data .
+4. File(s):  src/pipeline/bronze.py ,  tools/drift_drill.py .
+5. Dependencies: Task 1.3 (CSVs unpacked by  prepare.py  must exist for Bronze to read).
+6. Expected output: Bronze row counts per  _source_file  match each file's own row count; one documented schema-evolution event.
+7. Evidence to capture: E3 (schema-evolution event: what failed, what restarted it, where the new column lands,  _rescued_data  contents).
+8. Client explanation: "Bronze is an exact, traceable copy of the source files — nothing is changed or interpreted yet, so we can always prove what we started with."
+9. Interview explanation: "Auto Loader gives incremental file discovery + schema inference/evolution/rescued-data; schema hints prevent numeric-looking station IDs ( 5329.03 ) from being inferred as doubles, which would break downstream joins."
+
+Task 2.2 — Silver: conform, clean, validate, quarantine, de-duplicate
+
+1. Assignment requirement: Build target schema with derived columns; apply 7 documented rules ( has_source_file  fail,  ride_id_present / ended_after_started / duration_1min_to_24h / member_type_valid  drop,  period_matches_file / coords_in_area / stations_present  warn); quarantine failing rows; de-duplicate on  ride_id  in a materialized view ( silver_trips ); demonstrate  expect_or_fail  breaking once, screenshot, then remove.
+2. Business requirement: "Bad records are quarantined and explained, not silently dropped"; every file must reconcile; correct duration/rider-type splits for all 4 business questions.
+3. Databricks feature: Lakeflow expectations ( expect / expect_or_drop / expect_or_fail ), quarantine tables, materialized-view de-duplication,  try_to_timestamp /ANSI-safe casts.
+4. File(s):  src/pipeline/silver.py .
+5. Dependencies: Task 2.1 (Bronze must exist and be profiled first — "profile Bronze first" is explicit).
+6. Expected output:  silver_trips_clean  +  silver_trips_quarantine  rows = Bronze rows per file; data-quality view shows expectation metrics; duplicate count recorded.
+7. Evidence to capture: E4 (expectation metrics); README rules table (rule/behaviour/threshold/reason/rows affected); fail-behaviour screenshot + event log entry.
+8. Client explanation: "Every record that fails validation is kept in a separate, explainable holding area — nothing disappears silently, and we can show exactly why any given trip was excluded."
+9. Interview explanation: " expect  = warn+keep+metric,  expect_or_drop  = remove before write,  expect_or_fail  = stop and roll back the whole update — chosen per rule based on whether the rule is a structural invariant (fail), a bad-but-expected record (drop), or a fact worth surfacing without discarding (warn). Drop rules wrapped in  coalesce(rule,false)  so NULLs fail closed."
+
+Task 2.3 — Gold objects for the business questions
+
+1. Assignment requirement: Build  gold_demand_hourly ,  gold_weather_demand ,  gold_station_flow ,  gold_ride_behaviour ,  gold_station_health ,  gold_trip_detail_recent  (with row filter + masks declared, effective Day 5) — all built from Silver only, never from another Gold object;  CLUSTER BY  on large ones.
+2. Business requirement: Directly answers BQ1–BQ4 (demand patterns, station drain/fill, ride behavior, station health).
+3. Databricks feature: Materialized views, Liquid Clustering ( CLUSTER BY ), governed object with row filter + column masks (declared now, wired Day 5).
+4. File(s):  src/pipeline/gold.sql .
+5. Dependencies: Task 2.2 (Gold reads only from Silver, not raw Bronze).
+6. Expected output: All Gold objects refresh in dev; a first-draft query per business question against Gold; governed object exists with row filter/masks declared.
+7. Evidence to capture: Draft SQL + result per BQ (finalized fully Day 5); one-sentence justification per object (MV vs streaming table vs view).
+8. Client explanation: "This is the layer analysts and the dashboard actually query — it's built once from clean, validated data, so business numbers are consistent everywhere."
+9. Interview explanation: "MV chosen because Gold aggregations (dedup, joins, percentiles) must reflect the whole dataset on refresh, not just newly arrived rows — a streaming table's one-row-processed-once semantics would be wrong here."
+
+Day 2 exam checkpoint → expectation types, streaming table/MV/view choice,  addNewColumns  behavior,  _rescued_data  contents, why dedup happens in an MV not a stream.
+
+────────────────────
+
+DAY 3 — Orchestrate & Ship: Lakeflow Jobs and CI/CD (S4 Lakeflow Jobs, S5 CI/CD)
+
+Task 3.1 — Build job: DAG, control flow, retries, alerts
+
+1. Assignment requirement: Complete  prepare → has_new (if/else) → build (pipeline) → reconcile_each (for-each, concurrency 2) → quality_check → gate (if/else) → certify | raise_incident ; test the true branch (new file) and force the false branch ( max_quarantine_pct=-1 ).
+2. Business requirement: "New data should trigger the processing chain automatically"; "bad records explained" via incident branch.
+3. Databricks feature: Lakeflow Jobs — notebook/pipeline task types, condition (if/else) tasks, for-each task with concurrency, task values, retries, email notifications.
+4. File(s):  resources/jobs.yml ,  src/jobs/prepare.py ,  src/jobs/reconcile_period.py ,  src/jobs/quality_check.py ,  src/jobs/certify.py ,  src/jobs/raise_incident.py .
+5. Dependencies: Day 2 pipeline must exist (build task calls the pipeline); ops schema/tables from  setup_job  (Task 1.2).
+6. Expected output: Green dev run with every task incl. for-each iterations; forced run goes down false branch, writes  ops.incidents , fails, sends e-mail.
+7. Evidence to capture: E7 (build job DAG + green run), E8 (incident branch run).
+8. Client explanation: "If data quality drops below an agreed threshold, the system stops itself and raises an incident instead of publishing bad numbers."
+9. Interview explanation: "Condition tasks implement if/else via task-value comparisons; for-each with  concurrency:2  respects Free Edition's 5-concurrent-task account cap; retries are configured per task ( max_retries ,  min_retry_interval_millis ) distinctly for transient vs. structural failures."
+
+Task 3.2 — Three kinds of trigger
+
+1. Assignment requirement: Understand/prove  build_job  (file-arrival),  release_job  (table-update on  ops.release ),  weather_job / gbfs_job  (cron). Triggers are paused in  dev  ( mode: development ); proven for real in  prod  (Task 3.3).
+2. Business requirement: "Refreshes automatically as new data arrives" — event-driven, not clock-driven, so late/partial data doesn't cause empty or stale runs.
+3. Databricks feature: File-arrival trigger, table-update trigger, cron schedule trigger.
+4. File(s):  resources/jobs.yml .
+5. Dependencies: Task 3.1 (jobs must exist to attach triggers to); Task 1.2 bootstrap workaround (triggers referencing not-yet-existing paths/tables).
+6. Expected output: README trigger table mapping job → trigger → failure mode of the wrong alternative.
+7. Evidence to capture: (Full trigger proof captured in prod, Task 3.3 → E9.)
+8. Client explanation: "The pipeline runs exactly when something meaningful happens — new files landing, or a certified release — not on a guessed schedule that could run too early or waste compute running on no new data."
+9. Interview explanation: "File-arrival avoids the cron dilemma of running on empty/partial data or stale results; table-update ( condition: ANY_UPDATED ) chains the release job strictly after a certified change; cron is correct only for sources that don't emit an event (NOAA, GBFS polling)."
+
+Task 3.3 — CI/CD: Git folder, bundle targets, GitHub Actions
+
+1. Assignment requirement: Feature branch in Git folder → PR on GitHub → merge; deliberate merge conflict + resolution;  bundle validate -t dev / -t prod  show different schema resolution; target override (e.g., extra prod notification);  .github/workflows/deploy.yml  (validate on PR; deploy dev then prod on merge) using repo secrets; full prod end-to-end run (gbfs_job unpaused ≥8h, setup_job, weather_job, drop Feb 2025 → file-arrival build run → certify → table-update release run → then re-pause gbfs via PR).
+2. Business requirement: "Client can deploy the solution from Git with one command"; reproducible dev/prod separation without code branching on environment.
+3. Databricks feature: Git folders (branch/commit/PR/conflict resolution in-workspace), bundle variables vs. target overrides, GitHub Actions, repository secrets ( DATABRICKS_HOST / DATABRICKS_TOKEN ).
+4. File(s):  .github/workflows/deploy.yml ,  databricks.yml  (target block edits for  gbfs_pause ).
+5. Dependencies: Task 1.2 (bundle/Git folder must exist); Task 3.1–3.2 (jobs/triggers must be defined for prod).
+6. Expected output: Green Actions run on PR (validate) and merge (deploy dev+prod);  prd_*  schemas exist, no  [dev ...]  prefixes; one prod build run with trigger type File arrival, one release run with trigger type Table update.
+7. Evidence to capture: E9 (file-arrival + table-update triggered runs, screenshots), E10 (GitHub Actions runs).
+8. Client explanation: "Every change goes through review before reaching production, and deployment is fully automated once approved — no manual steps, no risk of forgetting an environment."
+9. Interview explanation: "Free Edition has no account-level APIs, so CI/CD authenticates with a PAT (or SP OAuth secret if the smoke test allowed it) rather than the production-ideal OIDC-federated service principal — a documented platform limitation, not a design choice."
+
+Day 3 exam checkpoint → trigger choice reasoning,  mode: development  effects, bundle variable vs. target override, repair-run scope, where PRs are opened for Git folders.
+
+────────────────────
+
+DAY 4 — Scale, Tune, Troubleshoot (S3 Transformation, S6 Troubleshooting)
+
+Task 4.1 — Backfill full volume through prod
+
+1. Assignment requirement:  drop_files.py --env prd --batch 6 --interval 1200  for remaining 13 months; monitor  prepare  duration;  max_concurrent_runs:1  with queueing.
+2. Business requirement: "Every monthly file must reconcile back to its source" at full ~55M-row production scale.
+3. Databricks feature: Lakeflow pipeline at scale, job queueing, run-history monitoring.
+4. File(s):  tools/drop_files.py  (invocation only — no new code).
+5. Dependencies: Day 3 fully working prod deployment with triggers live.
+6. Expected output: De-duplicated Silver >50M rows in  prd_lakehouse ;  prd_ops.reconciliation  = OK for every period/dataset within explained tolerance.
+7. Evidence to capture: E2 (reconciliation for every period); README pipeline duration per batch and total.
+8. Client explanation: "We processed the full 14-month, 55-million-trip history, and every single monthly file has been checked against its own source count."
+9. Interview explanation: "'Develop small, backfill big' — dev iterates on one month to conserve Free Edition's daily compute quota; the full-volume run happens once, in prod, driven by the same event-driven pipeline already proven on Day 3."
+
+Task 4.2 — Tuning experiment with real numbers
+
+1. Assignment requirement: Run perf-lab parts 1–3 on prd data twice each (record 2nd run); table of setting/duration/task count/join strategy; explain  auto  shuffle-partition choice vs.  8 ; state classic-compute settings you can't change here.
+2. Business requirement: "Cost awareness" / production readiness — not a client-facing question directly, but supports reliable, efficient refresh.
+3. Databricks feature: Query profile,  explain()  physical plan, join hints ( BROADCAST ),  spark.sql.shuffle.partitions .
+4. File(s):  src/perf/perf_lab.py .
+5. Dependencies: Task 4.1 (needs prd-scale data for meaningful measurements).
+6. Expected output: ≥7 measured rows; broadcast vs. sort-merge join confirmed in the physical plan.
+7. Evidence to capture: E11 (tuning results table).
+8. Client explanation: "We measured, not guessed, how the platform performs at full scale, so we know the numbers you see are computed efficiently."
+9. Interview explanation: "On serverless only 6 Spark settings are changeable;  autoBroadcastJoinThreshold /executor/driver memory aren't among them, so join strategy is steered via explicit  BROADCAST  hints instead of the classic-compute config knob."
+
+Task 4.3 — Skew, spill and failures on purpose
+
+1. Assignment requirement: Run skewed-window part 4 of the lab, capture before/after query profile (time/rows per task, spill,  DATA_SKEW  insight); run driver-memory part 5 once; inject a broken  %pip install  into  reconcile_period.py  on a branch, deploy, run, then remove + redeploy + Repair run, noting which tasks re-ran.
+2. Business requirement: Production reliability — proving the team can diagnose and recover from real failures.
+3. Databricks feature: Query profile/performance insights ( DATA_SKEW / DATA_SPILL ), job Repair run.
+4. File(s):  src/perf/perf_lab.py ,  src/jobs/reconcile_period.py  (temporary broken branch).
+5. Dependencies: Task 4.1/4.2 (needs data at scale + query-profile familiarity).
+6. Expected output: Before/after skew screenshots with 2-sentence diagnosis; repair run shows only the failed task + its dependents re-running.
+7. Evidence to capture: E12 (skew before/after), E13 (repair run).
+8. Client explanation: "When something breaks, we can pinpoint exactly which step failed and fix only that step — the rest of the pipeline's work is preserved, so recovery is fast."
+9. Interview explanation: "Skew shows as a handful of tasks with far higher duration/row counts and spill; fixes include better keys, salting, broadcast, AQE-driven splitting, or pre-aggregation. Repair run re-executes only unsuccessful tasks and their downstream dependents, keeping prior successful task outputs."
+
+Task 4.4 — Layout: partitioning vs. Liquid Clustering
+
+1. Assignment requirement: Compare Feb 2025 partitioned by  start_date  vs. clustered by  (start_date, start_station_id)  for a selective busy-station-week query; compare file counts/bytes read/pruning; set  CLUSTER BY AUTO ; check if predictive optimization is enabled.
+2. Business requirement: Efficient station-level queries supporting BQ2 (drain/fill stations).
+3. Databricks feature: Liquid Clustering,  CLUSTER BY AUTO , predictive optimization, query profile pruning stats.
+4. File(s):  src/perf/layout_lab.sql .
+5. Dependencies: Task 4.1 (needs Feb 2025 already backfilled in prd) and BQ2 results (station id used in the test).
+6. Expected output: Table of layout/numFiles/sizeInBytes/files read/bytes read/duration; 3-sentence conclusion.
+7. Evidence to capture: E14 (layout comparison).
+8. Client explanation: "Data is organized so that a query about one busy station only reads the small slice of data it needs, not the entire history."
+9. Interview explanation: "Liquid Clustering handles high-cardinality keys without full-table rewrites and adapts incrementally; partitioning only suits low-cardinality columns with ~1GB+ partitions; Z-ORDER is legacy and needs repeated full  OPTIMIZE . Liquid Clustering can't combine with partitioning/Z-ORDER."
+
+Task 4.5 — Monitoring: run history and health
+
+1. Assignment requirement: With ≥5 build runs, compare durations, find/explain the slowest run; review pipeline event log/data-quality view expectation-pass-rate trend; deliberately fail an upstream task and inspect the DAG's blocked/excluded view.
+2. Business requirement: "Client should be able to understand whether the data product is healthy."
+3. Databricks feature: Job run history, pipeline event log, data-quality view, DAG blocked-task visualization.
+4. File(s): None new — operational observation of Day 3/4 runs.
+5. Dependencies: Task 4.1 (needs several real runs accumulated).
+6. Expected output: README monitoring notes: duration trend + regression cause, expectation-pass-rate trend, blocked-DAG description.
+7. Evidence to capture: Run-history screenshots/notes feeding the monitoring section of the README (supports overall client trust narrative, not a numbered E-item).
+8. Client explanation: "We can show you, at a glance, whether today's data refresh succeeded, how long it took, and whether quality is trending up or down."
+9. Interview explanation: "Run history + event log + DAG view together form the production monitoring story used in place of the Spark UI, which doesn't exist on serverless."
+
+Day 4 exam checkpoint → skew diagnosis,  shuffle.partitions  vs  default.parallelism ,  autoBroadcastJoinThreshold , clustering/partitioning/Z-ORDER choice, predictive optimization, cluster start-up/library-conflict triage.
+
+────────────────────
+
+DAY 5 — Govern, Serve, Present (S7 Governance)
+
+Task 5.1 — Access control and table lifecycle
+
+1. Assignment requirement:  GRANT / SHOW GRANTS / REVOKE /re- GRANT  on  prd_gold  for a teammate or  account users ; create scratch managed table →  DROP  →  SHOW TABLES DROPPED IN  →  UNDROP .
+2. Business requirement: Analysts must be scoped to Gold only; demonstrates safe recoverability of accidental drops.
+3. Databricks feature: Unity Catalog  GRANT / REVOKE / SHOW GRANTS , managed-table  DROP / UNDROP  (7-day retention).
+4. File(s):  src/governance/10_access.sql .
+5. Dependencies: Full prod deployment (Task 3.3) and Gold objects existing (Task 2.3) since grants target  prd_gold .
+6. Expected output:  SHOW GRANTS  before/after  REVOKE  differs by exactly the removed row;  UNDROP  restores the scratch table.
+7. Evidence to capture: E15 partial (grants before/after REVOKE).
+8. Client explanation: "Access can be granted and revoked precisely, and we can prove it — and even an accidentally dropped table can be recovered within a week."
+9. Interview explanation: "Managed table  DROP  deletes underlying files but is recoverable via  UNDROP  inside the retention window; external table  DROP  only removes metadata, files remain in external storage."
+
+Task 5.2 — Row filter and column mask
+
+1. Assignment requirement: Run the same query against  gold_trip_detail_recent  in 3 entitlement states (full access → JC-only without sensitive flag → full access again) by editing  ops.entitlements ; screenshot all three.
+2. Business requirement: "Jersey City partner only sees Jersey City trips" and "precise coordinates protected unless entitled" — both explicit client requirements.
+3. Databricks feature: Row filter ( rf_scope ) + column masks ( mask_text ,  mask_coord ),  session_user() -driven entitlement lookup.
+4. File(s):  src/governance/11_entitlement_states.sql  (functions declared earlier in  gold.sql / ops  setup).
+5. Dependencies: Task 2.3 (row filter/masks declared on the governed object) + Task 1.2 ( ops.entitlements  table from setup).
+6. Expected output: Three distinct result sets from the identical query text.
+7. Evidence to capture: E15 (governance in three entitlement states).
+8. Client explanation: "We ran the exact same report as three different users and proved the partner literally cannot see New York trips or precise rider locations."
+9. Interview explanation: "Row filter = a function deciding which rows are visible; column mask = a function transforming a value for the reader; both are attached to the object and evaluated per query using  session_user()  against an entitlements table — enforced at the SQL layer, not the application layer."
+
+Task 5.3 — ABAC: two policies, many tables
+
+1. Assignment requirement: Create governed tags  sensitivity / access_scope ; tag lat/lng and  system  columns across every Gold object except  gold_trip_detail_recent ; create one mask policy + one row-filter policy at schema level matching by tag; verify with  SHOW POLICIES ; check tags survive a pipeline refresh; if governed tags unsupported, document the fallback (per-object rules in  gold.sql ).
+2. Business requirement: Same two client rules (coordinate generalization + partner row scoping) applied consistently and scalably across every current and future Gold table.
+3. Databricks feature: Governed tags, ABAC policies ( CREATE POLICY ... MATCH COLUMNS has_tag_value(...) ),  SHOW POLICIES .
+4. File(s):  src/governance/12_abac.sql .
+5. Dependencies: Task 5.2 (manual row filter/mask must exist first, since  gold_trip_detail_recent  is deliberately excluded — "a column cannot carry both").
+6. Expected output:  SHOW POLICIES  lists both; non-entitled partner sees masked coords + filtered rows on every tagged object.
+7. Evidence to capture: E15 (extends to ABAC-tagged objects); note on whether tags survive pipeline refresh; README explanation of ABAC vs. per-table rules and DENY-vs-GRANT interaction.
+8. Client explanation: "Instead of writing the same privacy rule on every table by hand, we tag sensitive columns once and the platform enforces the rule everywhere automatically — including on new tables we haven't built yet."
+9. Interview explanation: "ABAC decouples policy from schema: one mask/row-filter policy at schema level, matched by governed tag, applies to every current and future column carrying that tag — versus N manual rules for N tables. DENY (Beta, classic DBR18+ only) always overrides GRANT but isn't available on Free Edition — documented as a platform limitation, not implemented."
+
+Task 5.4 — Dashboard, business answers and lineage
+
+1. Assignment requirement: AI/BI dashboard on gold schema, ≥4 visuals answering BQ1–BQ4; certified-release counter from  ops.release_status ; Citi Bike/NOAA attribution, no logos; publish, export as  .lvdash.json , add  resources/dashboard.yml , enable dashboard task in release job; capture lineage graph source→dashboard.
+2. Business requirement: The client-facing deliverable answering every stated business question, refreshed automatically, properly attributed per the Citi Bike Data License.
+3. Databricks feature: AI/BI Dashboards, dashboard-as-code ( .lvdash.json  + bundle resource), dashboard task in a job, Unity Catalog lineage graph.
+4. File(s):  src/dashboards/client_dashboard.lvdash.json ,  resources/dashboard.yml ,  resources/jobs.yml  (uncomment  refresh_dashboard  task).
+5. Dependencies: Task 2.3 (Gold objects), Task 5.2/5.3 (governance must be live before the dashboard is client-facing), Task 3.1 (release job must exist to attach the dashboard task).
+6. Expected output: Published dashboard refreshed by a release-job run; SQL+result+plain-language sentence per BQ; lineage screenshot Bronze→dashboard.
+7. Evidence to capture: E16 (lineage graph); BQ1–BQ4 SQL/results/interpretations; dashboard link.
+8. Client explanation: "This dashboard is the single place you check for demand patterns, station health, and data freshness — and every number on it is traceable back to its original source file."
+9. Interview explanation: "Dashboard-as-code keeps the visual layer under version control and CI/CD like everything else; the release job's table-update trigger on  ops.release  chains the dashboard refresh strictly after certification, never showing uncertified data."
+
+Task 5.5 — Client pack and demo
+
+1. Assignment requirement: Finish README, architecture diagram,  docs/evidence.md ,  docs/demo-script.md ; record/deliver a 10-minute demo covering problem→answers, pipeline/reconciliation/quality, live file-drop demo, trust (filters/masks/ABAC/lineage), CI/CD ship path.
+2. Business requirement: The full client-facing narrative and hand-off package.
+3. Databricks feature: N/A (documentation + live demonstration of everything already built).
+4. File(s):  README.md ,  docs/architecture.png ,  docs/evidence.md ,  docs/demo-script.md ,  docs/exam-notes.md .
+5. Dependencies: All prior tasks (this is the closing synthesis task).
+6. Expected output: Everything in "What to submit" present in the repo/linked from README; all 27 checkpoint questions answered in own words.
+7. Evidence to capture: Complete E1–E16 checklist finalized; demo recording.
+8. Client explanation: "Here is the full story — the problem, how the data gets to you, how we prove it's right, who can see what, and how you can deploy and operate it yourself."
+9. Interview explanation: "This is the difference between 'a notebook that runs' and a production-shaped data product: event-driven ingestion, reconciled quality gates, governed access, measured performance, and a Git-based deployment path — each backed by captured evidence, not claims."
+
+Day 5 exam checkpoint → managed vs. external table  DROP , minimum privileges to query a table, row filter vs. mask vs. ABAC policy, DENY-vs-GRANT, why a schema-level REVOKE might not remove access.
+
+────────────────────
+
+Cross-cutting classification
+
+Mandatory items (required for the 100-point rubric; no bonus)
+
+• All Day 1–3 tasks (environment, bundle, landing, COPY INTO, REST+secrets, Bronze/Silver/Gold, DAG+triggers, CI/CD to prod).
+• Day 4 backfill to >50M Silver rows with full reconciliation, tuning/skew/layout experiments with real measured numbers, one repair run.
+• Day 5 governance (GRANT/REVOKE/SHOW GRANTS, UNDROP, 3-state row filter/mask proof, ABAC or documented fallback), dashboard with ≥4 visuals + BQ1–BQ4 answers, README/evidence/exam-notes/demo.
+• Naming conventions exactly as specified ( <env>_landing/lakehouse/gold/ops , object names as listed) — explicitly scored ("required naming conventions followed").
+
+Optional items (Stretch goals, up to 5 bonus points — only after everything else is done)
+
+• S1: Real Lakeflow Connect managed connector (Jira, Beta).
+• S2: pytest/chispa unit tests in CI before  bundle validate .
+• S3: SCD Type 2 station dimension via AUTO CDC from snapshots.
+
+Free Edition limitations (must be recorded, not worked around)
+
+• No Spark UI, no  cache() / persist() , no Scala/R.
+• Only 6 Spark settings changeable ( shuffle.partitions ,  files.maxPartitionBytes ,  session.timeZone ,  ansi.enabled ,  legacy.timeParserPolicy ,  execution.timeout );  autoBroadcastJoinThreshold , executor/driver memory,  default.parallelism  are NOT settable — use join hints instead.
+• No classic clusters/cluster policies/init scripts/cluster event log.
+• No external locations/external tables (managed tables only, but lifecycle still demonstrated via DROP/UNDROP).
+• DENY policies unavailable (Beta, needs classic DBR 18 LTS+, only  MANAGE ACCESS CONTROL  deniable) — must be explained as theory only.
+• Lakeflow Connect DB connectors and OIDC-federated service principals unavailable (no account-level APIs) — CI/CD must fall back to PAT (or SP OAuth secret if smoke test allows).
+• One active pipeline per type at a time; max 5 concurrent job tasks account-wide; daily compute quota — drives "develop small, backfill big" strategy.
+• Undocumented outbound allow-list — must be discovered via smoke test, with a laptop-side REST fallback documented if a host is blocked.
+• Governed tags/ABAC may not be available in every workspace — if so, must fall back to manual per-object row filters/masks in  gold.sql  and record the limitation.
+
+High-risk tasks (most likely to block or fail without careful handling)
+
+• Bundle bootstrap ordering (Task 1.2): triggers referencing not-yet-existing tables/paths can reject deploy — requires the comment-out/deploy/restore workaround.
+• Full backfill (Task 4.1): 50M+ rows, largest files in the variant, risk of quota exhaustion; must be staged (6 zips / 20 min apart) and monitored, not run all at once.
+• Schema-evolution drift drill (Task 2.1) and library-failure/repair drill (Task 4.3): intentionally break the pipeline — must be done on isolated branches/dev only, with careful revert.
+• CI/CD secrets handling (Task 3.3): must guarantee zero PATs/tokens in Git history ( git grep -i token  check).
+• Governance proof (Task 5.2/5.3): must actually re-run the same query in 3 entitlement states — easy to "claim it works" without evidence, which  pomt.txt  explicitly forbids ("PROVE they work").
+• Reconciliation (Task 4.1/2.2): explicitly flagged HIGH PRIORITY — Bronze = Silver clean + quarantine must hold exactly, for every one of 28 monthly files.
+
+Prerequisite chain (must complete before dependents)
+
+1. Task 1.1 (smoke test) → gates all REST/secret/governance decisions.
+2. Task 1.2 (bundle + schemas + volume) → required before any ingestion, pipeline, or job task.
+3. Task 1.3 (landing + COPY INTO +  prepare.py ) → required before Bronze (2.1) can read any CSVs.
+4. Task 2.1 (Bronze) → required before Task 2.2 (Silver reads Bronze) → required before Task 2.3 (Gold reads Silver only).
+5. Task 2.3 (Gold + governed object declared) → required before Task 3.1 build job (pipeline task) and later before Task 5.2/5.3 (row filter/mask proof) and Task 5.4 (dashboard).
+6. Task 3.1 (jobs exist) → required before Task 3.2 (attach/prove triggers) → required before Task 3.3 (CI/CD, prod deployment, end-to-end prod trigger proof).
+7. Task 3.3 (working prod deployment) → required before Task 4.1 (backfill through prod) → required before Tasks 4.2–4.5 (all measurements need prd-scale data).
+8. Task 4.1 (prd data + reconciliation) → required before Task 5.1–5.3 (governance demonstrated against  prd_*  objects per the assignment's own SQL, which targets  workspace.prd_* ).
+9. Task 5.2 (manual row filter/mask on  gold_trip_detail_recent ) → must exist before Task 5.3 (ABAC explicitly excludes that object since "a column cannot carry both").
+10. Everything (Day 1–5) → Task 5.5 (final client pack/demo), which is a synthesis, not new implementation.
