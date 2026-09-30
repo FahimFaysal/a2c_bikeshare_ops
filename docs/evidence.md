@@ -21,7 +21,7 @@ actual command/output captured — nothing is written ahead of verification.
 | E12 | Skew before/after | 4.3 done — below; profile screenshots to add |
 | E13 | Repair run | 4.3 | done — below; screenshots to add |
 | E14 | Layout comparison | 4.4 done — below |
-| E15 | Governance in three entitlement states, grants before/after REVOKE | 5.1–5.3 | |
+| E15 | Governance in three entitlement states, grants before/after REVOKE | 5.1–5.3 | done — below; screenshots to add |
 | E16 | Lineage graph | 5.4 | |
 
 ## Day 1
@@ -166,34 +166,34 @@ Prod data, 2026-09-30, run `834984070888258`. 10 measurements, each run twice; t
 
 ## Day 5
 
-### Task 5.1 — Access control
--
+### Task 5.1 — Access control (E15, grants)
+- Prod, 2026-09-30. `SHOW GRANTS ON SCHEMA workspace.prd_gold` before REVOKE: `account users` SELECT +
+  USE SCHEMA; after `REVOKE SELECT`: only USE SCHEMA (exactly the SELECT row removed); restored after.
+- `scratch_undrop` (116 rows): DROP, listed by `SHOW TABLES DROPPED IN workspace.prd_ops`, `UNDROP`,
+  116 rows again.
+- Screenshots of both `SHOW GRANTS` outputs and the dropped-table list still to add.
 
-### Task 5.2 — Row filter / column mask
-Dev rehearsal 2026-09-30 (prod proof follows once the backfill has finished). Same query on
-`dev_gold.gold_trip_detail_recent`, entitlement row of the running user:
-- State 1 (`*`, sensitive = true): sample ride `0000C966ED0B7397`, avg latitude 40.732402, max 40.75453.
-- State 2 (`JC`, sensitive = false): sample ride `id_00026b012d3a` (pseudonymised), avg 40.732363,
-  max 40.755 (rounded to 3 decimals).
-- State 3 (back to `*`, true): identical to state 1.
-Limit of the dev data: its last 30 days hold only Jersey City rows, so the row filter could not hide
-New York there; the prod proof must show both systems.
+### Task 5.2 — Row filter / column mask (E15, three states)
+Prod, same query on `prd_gold.gold_trip_detail_recent`:
+- State 1 (`*`, sensitive): JC 97,081 rows, NYC 4,757,496; sample ride `0000AFA56A504706`; avg lat 40.732294, max 40.75453.
+- State 2 (`JC`, not sensitive): JC 97,081 only; sample ride `id_00002ccebbc6`; avg lat 40.732279, max 40.755.
+- State 3 (back to `*`): identical to state 1.
+- Dev rehearsal earlier the same day matched (JC only there, since its 30-day window held no NYC rows).
+- Screenshots of the three result sets still to add. No teammate invited, so no second-user run.
 
-### Task 5.3 — ABAC
-Dev rehearsal 2026-09-30 on `dev_gold` (prod run follows the backfill).
-- Governed tags `sensitivity` (financial, restricted, location) and `access_scope` (partner) created with SQL.
-- `information_schema.column_tags`: `lat`/`lng` tagged `location` on `gold_station_flow` and
-  `gold_station_health`; `system` tagged `partner` on the five Gold objects other than
-  `gold_trip_detail_recent`.
-- `SHOW POLICIES ON SCHEMA workspace.dev_gold`: `generalise_locations` (COLUMN_MASK) and
+### Task 5.3 — ABAC (E15, tagged objects)
+- Prod: 9 column tags; `SHOW POLICIES ON SCHEMA workspace.prd_gold` → `generalise_locations` (COLUMN_MASK),
   `partner_rows` (ROW_FILTER).
-- `gold_demand_hourly`: full access NYC 2,030,942 + JC 200,057 trips; as JC without the sensitive
-  flag only JC 200,057. `gold_station_flow` avg/max latitude 40.743217/40.8863 in full access;
-  as the partner 252 JC rows only, max latitude 40.772 (rounded).
-- Not yet checked: whether tags survive a pipeline refresh (needs a refresh of the dev pipeline).
+- Partner state: `gold_demand_hourly` JC 1,240,100 only (full access adds NYC 54,534,618);
+  `gold_station_health` 81 JC stations, max lat 40.755, max lng −74.024; `gold_station_flow` JC 528 rows, max lat 40.85.
+- Tags survive refresh: dev full refresh (update `8000d2`) of three tagged Gold views: 9 of 9 tags and both policies intact.
+- Screenshots to add: `SHOW POLICIES`, partner-state results.
 
 ### Task 5.4 — Dashboard
--
+- Dashboard as code: `src/dashboards/client_dashboard.lvdash.json`, `resources/dashboard.yml`, refresh task in
+  the release job; deployed to dev and prod by the merge of PR #2 (Actions run `36710937297`).
+- BQ1–BQ4 SQL, results and interpretation: `docs/business-questions.md` (BQ4 provisional).
+- Lineage graph (E16) and the published dashboard link: to add.
 
 ### Task 5.5 — Client pack
 -

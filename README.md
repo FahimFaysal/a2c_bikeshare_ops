@@ -157,9 +157,9 @@ variables, job parameters, or pipeline configuration.
 - [x] **4.5 Monitoring: run history and health** — done; see [Task evidence log](#task-45--monitoring-run-history-and-health).
 
 ### Day 5 tasks
-- [ ] **5.1 Access control and table lifecycle** — GRANT/REVOKE/SHOW GRANTS, DROP/UNDROP.
-- [ ] **5.2 Row filter and column mask** — 3 entitlement states proven.
-- [ ] **5.3 ABAC: two policies, many tables** — governed tags + schema-level policies.
+- [x] **5.1 Access control and table lifecycle** — done; see [Task evidence log](#task-51--access-control-and-the-table-lifecycle).
+- [x] **5.2 Row filter and column mask** — done; see [Task evidence log](#task-52--row-filter-and-column-mask).
+- [x] **5.3 ABAC: two policies, many tables** — done; see [Task evidence log](#task-53--abac-two-policies-many-tables).
 - [ ] **5.4 Dashboard, business answers and lineage** — ≥4 visuals, BQ1–BQ4, lineage graph.
 - [ ] **5.5 Client pack and the demo** — README, evidence pack, demo script, exam notes.
 
@@ -815,6 +815,77 @@ red, and `quality_check`, `gate`, `certify` and `raise_incident` as **Upstream f
 never started). After a successful quality gate the not-taken branch shows as **Excluded**
 (`raise_incident` in the green runs, `certify` in the forced-incident run). Excluded means a
 condition routed around the task; upstream failed means a dependency broke.
+
+### Task 5.1 — Access control and the table lifecycle
+
+Run on 2026-09-30 against `prd`. No teammate is invited to the workspace, so the reader is
+`account users` (the assignment's fallback). `src/governance/10_access.sql`:
+
+```
+SHOW GRANTS ON SCHEMA workspace.prd_gold            -- before REVOKE
+account users | SELECT     | SCHEMA | workspace.prd_gold
+account users | USE SCHEMA | SCHEMA | workspace.prd_gold
+
+REVOKE SELECT ON SCHEMA workspace.prd_gold FROM `account users`
+SHOW GRANTS ON SCHEMA workspace.prd_gold            -- after: exactly the SELECT row is gone
+account users | USE SCHEMA | SCHEMA | workspace.prd_gold
+```
+
+The SELECT grant was then restored. Lifecycle: `scratch_undrop` (116 rows) was created in `prd_ops`,
+dropped, listed by `SHOW TABLES DROPPED IN workspace.prd_ops` (managed, deleted 14:51:12 UTC) and
+restored with `UNDROP TABLE`; 116 rows again.
+
+Managed against external tables: dropping a managed table makes Unity Catalog delete its data files,
+which is why `UNDROP` is possible only inside the retention window (7 days by default), after which
+the files are purged; dropping an external table removes only the metadata and the files stay in
+the external storage location. Free Edition has no external locations, so only the managed case
+could be run.
+
+### Task 5.2 — Row filter and column mask
+
+`gold_trip_detail_recent` carries `WITH ROW FILTER rf_scope ON (system)` and masks on `ride_id` and
+the four coordinate columns, declared in its pipeline definition. The same query
+(`src/governance/11_entitlement_states.sql`) in three states of the running user's row in
+`prd_ops.entitlements`:
+
+| State | Entitlement | JC rows | NYC rows | Sample ride id | Avg / max start_lat (JC) |
+|---|---|---|---|---|---|
+| 1 | `*`, sensitive = true | 97,081 | 4,757,496 | `0000AFA56A504706` | 40.732294 / 40.75453 |
+| 2 | `JC`, sensitive = false | 97,081 | **not visible** | `id_00002ccebbc6` | 40.732279 / **40.755** |
+| 3 | back to `*`, true | 97,081 | 4,757,496 | `0000AFA56A504706` | 40.732294 / 40.75453 |
+
+In state 2 the New York group disappears, ids are replaced by a hash, and latitudes are rounded to
+three decimals (about 100 m). The user was returned to state 3 each time, because the pipeline
+refreshes as that user and would otherwise see an empty table. The test used one account playing
+all roles; the assignment also asks for a teammate's run if one was invited, and none was.
+
+### Task 5.3 — ABAC: two policies, many tables
+
+`src/governance/12_abac.sql` on `prd_gold`: governed tags `sensitivity` (`location`) on `lat`/`lng`
+of `gold_station_flow` and `gold_station_health`, and `access_scope` (`partner`) on `system` of the
+five Gold objects other than `gold_trip_detail_recent` (which keeps its manual rules; one column
+cannot carry both). `SHOW POLICIES ON SCHEMA workspace.prd_gold` lists `generalise_locations`
+(COLUMN_MASK) and `partner_rows` (ROW_FILTER). As the JC partner without the sensitive flag:
+
+| Object | Full access | Partner |
+|---|---|---|
+| `gold_demand_hourly` | JC 1,240,100 and NYC 54,534,618 trips | JC 1,240,100 only |
+| `gold_station_health` | 81 JC and 2,040 NYC stations; max lat 40.8863 | 81 JC stations; max lat 40.755, max lng −74.024 (3 decimals) |
+| `gold_station_flow` | JC 528 and NYC 4,727 rows | JC 528 rows; max lat 40.85 |
+
+Tags survive a refresh: a full refresh of `gold_station_flow`, `gold_station_health` and
+`gold_demand_hourly` in dev (update `8000d2`) left all 9 column tags and both policies in place.
+Tested in dev; the same pipeline definition runs in prod. (A first attempt failed only because the
+refresh selection needs the schema-qualified name `workspace.dev_gold.<table>`.)
+
+ABAC against per-table rules: the two policies are defined once on the schema and apply to every
+column carrying the tag, including tables created later, whereas manual rules need one filter or mask
+declared on each table and repeated each time a table is added (nine tagged columns here would have
+been nine manual statements, and a new Gold table would have been unprotected until someone
+remembered). DENY would sit on top of this: a DENY always overrides any GRANT, including inherited,
+group and ownership grants (metastore admins are exempt), but only `MANAGE ACCESS CONTROL` can be
+denied today and creating one needs classic compute on DBR 18 LTS or later, so it is not available
+on Free Edition and was not implemented.
 
 #### What this means for the rest of the build
 - No REST host used by this variant is blocked from serverless notebooks — Tasks 1.3/1.4 (COPY INTO,
