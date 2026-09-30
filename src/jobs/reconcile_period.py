@@ -1,4 +1,7 @@
 # Databricks notebook source
+# MAGIC %pip install this-package-does-not-exist==0.0.1
+
+# COMMAND ----------
 # src/jobs/reconcile_period.py — runs once per period inside the for-each task
 from pyspark.sql import functions as F
 
