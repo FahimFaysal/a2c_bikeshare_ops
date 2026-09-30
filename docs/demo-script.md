@@ -1,4 +1,4 @@
-# Demo script — 10 minutes
+# Demo script — Assignment 2C
 
 Follows the assignment's outline. Have open before starting: the published dashboard, the prod
 build job's run list, the SQL editor with `src/governance/11_entitlement_states.sql`, the GitHub
