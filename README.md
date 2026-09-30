@@ -154,7 +154,7 @@ variables, job parameters, or pipeline configuration.
 - [x] **4.2 Tuning experiment with real numbers** — done; see [Task evidence log](#task-42--tuning-experiment-with-real-numbers).
 - [x] **4.3 Skew, spill and failures on purpose** — done; see [Task evidence log](#task-43--skew-spill-and-failures-on-purpose).
 - [x] **4.4 Layout: partitioning vs Liquid Clustering** — done; see [Task evidence log](#task-44--layout-partitioning-versus-liquid-clustering).
-- [ ] **4.5 Monitoring: run history and health** — duration trend, expectation trend, blocked-DAG view.
+- [x] **4.5 Monitoring: run history and health** — done; see [Task evidence log](#task-45--monitoring-run-history-and-health).
 
 ### Day 5 tasks
 - [ ] **5.1 Access control and table lifecycle** — GRANT/REVOKE/SHOW GRANTS, DROP/UNDROP.
@@ -718,6 +718,31 @@ serverless driver is large enough for two million narrow rows; it was slow, and 
 not fit. The fix is to aggregate on the cluster and collect the small result: 28 daily rows came back
 in a fraction of the time (`aggregate first` in the same run).
 
+**Library failure and repair.** On branch `drill/broken-library` (never merged) the first cell of
+`reconcile_period.py` was changed to `%pip install this-package-does-not-exist==0.0.1`, deployed to
+`dev`, and `JC-202505` was dropped. Build run `241408831117189`:
+
+| Task | First attempt | After repair |
+|---|---|---|
+| `prepare` | SUCCESS | kept (not re-run) |
+| `has_new` | SUCCESS | kept |
+| `build` (pipeline) | SUCCESS | kept |
+| `reconcile_each` | **FAILED** | re-ran: SUCCESS |
+| `quality_check` | UPSTREAM_FAILED | re-ran: SUCCESS |
+| `gate` | UPSTREAM_FAILED | re-ran: true |
+| `certify` | UPSTREAM_FAILED | re-ran: SUCCESS |
+| `raise_incident` | UPSTREAM_FAILED | re-ran: EXCLUDED (false branch not taken) |
+
+Diagnosis, in the order followed: the failing task was `reconcile_each`; the iteration's error is
+`PipError: ... pip install ... this-package-does-not-exist==0.0.1 returned non-zero exit status 1`, so
+the notebook never reached its own code (two iteration attempts appear, the second being the
+serverless automatic retry). Everything after it is `UPSTREAM_FAILED`: they did not run, they did not
+fail. The input data was fine (`prepare` and `build` succeeded, Bronze was already loaded). The fix
+was to remove the line, redeploy and use **Repair run** with "re-run all failed tasks" (same run id,
+`attempt=1` for the five tasks that re-ran). Only the failed task and its dependents re-ran, and the
+repair used the freshly deployed notebook. Evidence it worked: `dev_ops.reconciliation` for the run
+shows 2025-05 jc 93,227 = 93,227 = 93,198 + 29, OK, and `dev_ops.release` has a row for the run.
+
 ### Task 4.4 — Layout: partitioning versus Liquid Clustering
 
 February 2025 from `silver_trips` (2,076,315 rows), queried for the busiest station (`6140.05`,
@@ -742,6 +767,44 @@ partition key on station would create about 2,000 of them. On a table of 55 M ro
 clustering grows, because both columns prune and the layout can change without rewriting data.
 Predictive optimization would run OPTIMIZE (to keep the clustered files compact), VACUUM and ANALYZE
 on these managed tables, and with `CLUSTER BY AUTO` would revise the keys from observed queries.
+
+### Task 4.5 — Monitoring: run history and health
+
+**Run history (prod build job, 11 runs, all FILE_ARRIVAL and SUCCESS).**
+
+| Run (UTC) | Files landed | Duration | Note |
+|---|---|---|---|
+| 11:38 | Feb 2025 | 248 s | first run, 2 files |
+| 11:52 – 12:39 (5 runs) | May, Jun, Jul, Aug, Sep 2024 | 270 – 442 s | steady; scales with the month, not the history |
+| **12:47** | Sep–Oct 2024 files | **1,687 s** | slowest: five pipeline retries, see below |
+| 13:18 | Nov 2024 | 1,003 s | four retries for the same reason |
+| 13:43 – 14:22 (3 runs) | Dec 2024 – Jun 2025 | 413 – 626 s | back to normal |
+
+Slowest run and cause: `943066878271874` took 1,687 s against a typical 300–450 s. The pipeline could
+not start serverless compute (`RESOURCE_EXHAUSTED ... limit for severless compute for free usage`)
+and retried itself with growing waits (cause `RETRY_ON_FAILURE`) until it got compute. It was not a
+bigger batch, schema evolution or a full refresh of a materialized view, and the data in the
+run reconciled. Regression fix to record: keep other serverless work idle during a backfill.
+
+**Expectation trend (prod `silver_trips_clean`, per pipeline update).** Each update processed only
+its new rows (the update row counts add up to the 55.8 M total), so a pass rate is per batch:
+
+| Expectation | Failures per batch | Pass rate |
+|---|---|---|
+| `duration_1min_to_24h` (drop) | 323 to 3,165; higher in the first May 2024 batch (JC under-one-minute trips) | 99.93% or better |
+| `period_matches_file` (warn) | 253 to 1,673 | 99.97% or better |
+| `coords_in_area` (warn) | 688 to 4,582 | 99.9% or better |
+| `stations_present` (warn) | 5,422 to 26,402 | 99.61% to 99.75%, slowly drifting down from 99.74% to 99.61% as e-bike share grows |
+
+The one visible trend is `stations_present`: the share of trips without a station id rises
+slightly over the year, consistent with e-bike growth (dockless ends). No rule shows a step change.
+
+**Blocked DAG.** Deliberately failing an upstream task was done in the repair drill (Task 4.3): when
+`reconcile_each` fails, the DAG view shows `prepare`, `has_new` and `build` green, `reconcile_each`
+red, and `quality_check`, `gate`, `certify` and `raise_incident` as **Upstream failed** (grey; they
+never started). After a successful quality gate the not-taken branch shows as **Excluded**
+(`raise_incident` in the green runs, `certify` in the forced-incident run). Excluded means a
+condition routed around the task; upstream failed means a dependency broke.
 
 #### What this means for the rest of the build
 - No REST host used by this variant is blocked from serverless notebooks — Tasks 1.3/1.4 (COPY INTO,

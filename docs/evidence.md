@@ -19,7 +19,7 @@ actual command/output captured — nothing is written ahead of verification.
 | E10 | GitHub Actions runs | 3.3 | done — below; screenshots to add |
 | E11 | Tuning results | 4.2 done — below |
 | E12 | Skew before/after | 4.3 done — below; profile screenshots to add |
-| E13 | Repair run | 4.3 | |
+| E13 | Repair run | 4.3 | done — below; screenshots to add |
 | E14 | Layout comparison | 4.4 done — below |
 | E15 | Governance in three entitlement states, grants before/after REVOKE | 5.1–5.3 | |
 | E16 | Lineage graph | 5.4 | |
@@ -143,11 +143,15 @@ Prod data, 2026-09-30, run `834984070888258`. 10 measurements, each run twice; t
   SortMergeJoin 1.46 s (754 ms task time), no hint → BroadcastHashJoin 0.91 s.
 - Task counts per run are not measured (query profile only).
 
-### Task 4.3 — Skew/spill/failure (E12, E13) — in progress
+### Task 4.3 — Skew/spill/failure (E12, E13)
 - **E12** window by `member_type` 5.66 s against `member_type, start_date` 2.11 s (same 463 MB read,
   task time 8.2 s against 8.0 s, spill 0). Screenshots of both query profiles still to add.
 - Driver memory: `collect()` of 2,076,315 rows succeeded in 88.2 s (run `631840496830221`); it did not fail.
-- **E13** repair run: not yet done.
+- **E13** drill run `241408831117189` (dev): `%pip install this-package-does-not-exist==0.0.1` made
+  `reconcile_each` FAIL (PipError), four downstream tasks UPSTREAM_FAILED; after removing the line and
+  `repair-run --rerun-all-failed-tasks`, `prepare`/`has_new`/`build` kept attempt 0 and `reconcile_each`,
+  `quality_check`, `gate`, `certify`, `raise_incident` re-ran as attempt 1 (SUCCESS / EXCLUDED).
+  Reconciliation 2025-05 jc 93,227 = 93,198 + 29 OK. Screenshots of the failed DAG and the repair view to add.
 
 ### Task 4.4 — Layout (E14)
 - **E14** February 2025, busiest station `6140.05`, week 10–16 Feb, cold run: partitioned 28 files /
@@ -155,7 +159,10 @@ Prod data, 2026-09-30, run `834984070888258`. 10 measurements, each run twice; t
   7.45 MB, 1.20 s. Predictive optimization ENABLE (inherited from the metastore); `CLUSTER BY AUTO` set.
 
 ### Task 4.5 — Monitoring
--
+- 11 prod build runs: 248–626 s normally; slowest `943066878271874` 1,687 s from five automatic pipeline
+  retries after `RESOURCE_EXHAUSTED` on serverless start-up (not data).
+- Expectation trend per update: `stations_present` pass rate 99.74% → 99.61%; other rules flat.
+- Blocked-DAG view: UPSTREAM_FAILED vs EXCLUDED, from the repair drill. Screenshots to add.
 
 ## Day 5
 
