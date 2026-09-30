@@ -138,7 +138,7 @@ FROM workspace.prd_lakehouse.silver_trips GROUP BY 1, 2 ORDER BY 1, 2;
 | electric | member | 30,015,618 | 8.5 | 22.2 | 1.4% | 1.1% |
 
 **In plain language.** Casual riders ride about twice as long as members (median 15 minutes on a
-classic bike against 8), take round trips four times as often (6.7% against 1.9%) and are six
+classic bike against 8), take round trips more than three times as often (6.7% against 1.9%) and are six
 times as likely to keep a bike over 45 minutes (7.6% against 1.2%). Electric bikes shorten casual
 rides (12 against 15 minutes) and barely change member rides. **Limits:** the publisher already
 removed trips under 60 seconds, so the distribution starts at exactly one minute (the shortest trip
