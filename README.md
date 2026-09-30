@@ -772,13 +772,22 @@ on these managed tables, and with `CLUSTER BY AUTO` would revise the keys from o
 
 **Run history (prod build job, 11 runs, all FILE_ARRIVAL and SUCCESS).**
 
-| Run (UTC) | Files landed | Duration | Note |
-|---|---|---|---|
-| 11:38 | Feb 2025 | 248 s | first run, 2 files |
-| 11:52 – 12:39 (5 runs) | May, Jun, Jul, Aug, Sep 2024 | 270 – 442 s | steady; scales with the month, not the history |
-| **12:47** | Sep–Oct 2024 files | **1,687 s** | slowest: five pipeline retries, see below |
-| 13:18 | Nov 2024 | 1,003 s | four retries for the same reason |
-| 13:43 – 14:22 (3 runs) | Dec 2024 – Jun 2025 | 413 – 626 s | back to normal |
+| Run (start UTC) | Periods certified (from `ops.release`) | Rows | Duration | Note |
+|---|---|---|---|---|
+| 11:38 | 2025-02 | 2.08 M | 248 s | first run |
+| 11:52 | 2024-05 | 4.23 M | 356 s | |
+| 11:58 | 2024-06 | 4.89 M | 270 s | |
+| 12:05 | 2024-07 | 4.84 M | 296 s | |
+| 12:32 | 2024-08 | 4.71 M | 301 s | |
+| 12:39 | 2024-09 | 5.11 M | 442 s | |
+| **12:47** | 2024-10 | 5.27 M | **1,687 s** | slowest: compute could not be started, five retries |
+| 13:18 | 2024-11, 2024-12, 2025-01 | 8.34 M | 1,003 s | three months in one run; four retries for the same reason |
+| 13:43 | 2025-03 | 3.24 M | 626 s | |
+| 13:55 | 2025-04, 2025-05 | 8.22 M | 415 s | two months, no retries |
+| 14:22 | 2025-06 | 4.86 M | 413 s | |
+
+Without the two runs that had to wait for compute, the time scales with the rows in the batch, not
+with the history already loaded (8.2 M rows in 415 s, 4.2 M in 356 s).
 
 Slowest run and cause: `943066878271874` took 1,687 s against a typical 300–450 s. The pipeline could
 not start serverless compute (`RESOURCE_EXHAUSTED ... limit for severless compute for free usage`)
@@ -791,13 +800,14 @@ its new rows (the update row counts add up to the 55.8 M total), so a pass rate 
 
 | Expectation | Failures per batch | Pass rate |
 |---|---|---|
-| `duration_1min_to_24h` (drop) | 323 to 3,165; higher in the first May 2024 batch (JC under-one-minute trips) | 99.93% or better |
+| `duration_1min_to_24h` (drop) | 323 to 3,165; highest in the May 2024 batch (JC trips under one minute) | 99.92% or better |
 | `period_matches_file` (warn) | 253 to 1,673 | 99.97% or better |
 | `coords_in_area` (warn) | 688 to 4,582 | 99.9% or better |
-| `stations_present` (warn) | 5,422 to 26,402 | 99.61% to 99.75%, slowly drifting down from 99.74% to 99.61% as e-bike share grows |
+| `stations_present` (warn) | 5,422 to 26,402 | 99.61% to 99.75%; 99.74% in the first batch and 99.61% in the last |
 
-The one visible trend is `stations_present`: the share of trips without a station id rises
-slightly over the year, consistent with e-bike growth (dockless ends). No rule shows a step change.
+The only movement is in `stations_present`: the share of trips without a station id is a little
+higher in the latest batches. Whether that follows e-bike use was not investigated. No rule shows
+a step change.
 
 **Blocked DAG.** Deliberately failing an upstream task was done in the repair drill (Task 4.3): when
 `reconcile_each` fails, the DAG view shows `prepare`, `has_new` and `build` green, `reconcile_each`

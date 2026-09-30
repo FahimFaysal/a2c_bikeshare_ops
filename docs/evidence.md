@@ -130,7 +130,7 @@ Run 2026-09-30, dev. Task-by-task table in `README.md` → "Task 3.1".
 Run 2026-09-30, prod. Full 28-row table in `README.md` → "Task 4.1".
 - **E2** `prd_ops.reconciliation`: 28 of 28 period/system rows OK. Bronze 55,789,305 = clean 55,774,740
   + quarantine 14,565; `silver_trips` 55,774,718 (22 duplicates removed); 11 releases; 0 incidents.
-- 11 build runs, all FILE_ARRIVAL and SUCCESS, 6,057 s in total; slowest `943066878271874` (1,687 s)
+- 11 build runs, all FILE_ARRIVAL and SUCCESS, 6,057 s in total; slowest `943066878271874` (October 2024, 1,687 s)
   caused by Free Edition serverless `RESOURCE_EXHAUSTED` and five automatic pipeline retries.
 - May 2024 JC quarantine 2.1%: 1,997 trips under one minute.
 - Screenshot still to add: `prd_ops.reconciliation` in the SQL editor.
@@ -161,7 +161,7 @@ Prod data, 2026-09-30, run `834984070888258`. 10 measurements, each run twice; t
 ### Task 4.5 — Monitoring
 - 11 prod build runs: 248–626 s normally; slowest `943066878271874` 1,687 s from five automatic pipeline
   retries after `RESOURCE_EXHAUSTED` on serverless start-up (not data).
-- Expectation trend per update: `stations_present` pass rate 99.74% → 99.61%; other rules flat.
+- Expectation trend per update: `stations_present` pass rate 99.74% (first batch) and 99.61% (last); other rules flat.
 - Blocked-DAG view: UPSTREAM_FAILED vs EXCLUDED, from the repair drill. Screenshots to add.
 
 ## Day 5
