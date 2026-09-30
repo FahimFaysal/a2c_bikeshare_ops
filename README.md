@@ -4,8 +4,10 @@ Individual submission for BJIT Databricks Data Engineer Assignment 2C (Variant C
 Client (fictional): **Riverline Urban Planning**, advising a city transport department on
 bike-share rebalancing and station expansion.
 
-Status: work in progress, built incrementally Day 1 → Day 5 per the assignment's day plan.
-This README is updated as each task is completed; nothing below is written ahead of being verified.
+Status: built incrementally Day 1 → Day 5 per the assignment's day plan; all tasks are implemented and
+verified in the workspace except the items listed under Known limitations and in `docs/evidence.md`
+(screenshots, the Git-folder conflict in the UI, BQ4 final numbers).
+Nothing below is written ahead of being verified.
 
 ---
 
@@ -160,7 +162,7 @@ variables, job parameters, or pipeline configuration.
 - [x] **5.1 Access control and table lifecycle** — done; see [Task evidence log](#task-51--access-control-and-the-table-lifecycle).
 - [x] **5.2 Row filter and column mask** — done; see [Task evidence log](#task-52--row-filter-and-column-mask).
 - [x] **5.3 ABAC: two policies, many tables** — done; see [Task evidence log](#task-53--abac-two-policies-many-tables).
-- [ ] **5.4 Dashboard, business answers and lineage** — ≥4 visuals, BQ1–BQ4, lineage graph.
+- [x] **5.4 Dashboard, business answers and lineage** — built and refreshing in prod; BQ4 provisional, screenshots to add; see [Task evidence log](#task-54--dashboard-and-lineage).
 - [ ] **5.5 Client pack and the demo** — README, evidence pack, demo script, exam notes.
 
 ## 5. Repository layout (Appendix A.2)
@@ -887,6 +889,31 @@ group and ownership grants (metastore admins are exempt), but only `MANAGE ACCES
 denied today and creating one needs classic compute on DBR 18 LTS or later, so it is not available
 on Free Edition and was not implemented.
 
+### Task 5.4 — Dashboard and lineage
+
+The client dashboard is code: `src/dashboards/client_dashboard.lvdash.json` with
+`resources/dashboard.yml` (catalog and schema come from `dataset_catalog` / `dataset_schema`, so the
+same file serves `dev_gold` and `prd_gold`) and a `refresh_dashboard` task in the release job after
+`release_summary`. It has a certified-release tile (from `ops.release_status`), the hour × weekday
+heatmap and monthly e-bike share and trips per day (BQ1), the rain table, the top-20 drain and fill
+stations with a map (BQ2, coordinates masked by policy for non-entitled readers), duration and
+round-trip tables (BQ3), the busy-but-empty stations table (BQ4) and a footer crediting Citi Bike
+public system data (Lyft Bikes and Scooters, Citi Bike Data License Agreement) and NOAA. It carries
+no logos and exposes no trip-level rows.
+
+Prod dashboard: `https://dbc-cb530432-dccc.cloud.databricks.com/dashboardsv3/01f1bcc522a2147bbef41fcb1a5e703c/published`
+(published). The release job refreshed it in every release since PR #2 merged: all 10 later
+`release_job` runs (trigger Table update) succeeded, the latest (`1062088722485667`, 30 s) with
+`release_summary` 8 s and `refresh_dashboard` 21 s. The dataset queries were checked by running each
+one against the gold schema; the visual layout has not been reviewed on screen (screenshot to add).
+
+Lineage (from the Unity Catalog lineage API): `bronze_trips` → `silver_trips_clean` → `silver_trips` →
+`gold_station_flow`, `gold_weather_demand`, `gold_demand_hourly`, `gold_ride_behaviour`,
+`gold_station_health`; `gold_station_flow` has upstreams `silver_trips` and `dim_station`. The
+graph screenshot from Catalog Explorer is still to be captured.
+
+BQ1–BQ4 with SQL, results and plain-language answers: `docs/business-questions.md` (BQ4 provisional).
+
 #### What this means for the rest of the build
 - No REST host used by this variant is blocked from serverless notebooks — Tasks 1.3/1.4 (COPY INTO,
   weather REST, GBFS poll) can run directly in the workspace; no laptop-side REST fallback is needed.
@@ -918,3 +945,72 @@ delivery):
 
 *(More sections — ingestion decisions, rules table, trigger table, access model, etc. — are added as
 each task is completed, per the assignment's "capture evidence as you go" instruction.)*
+
+---
+
+## Access model
+
+| Who | Gets | How |
+|---|---|---|
+| Engineer (the workspace admin) | Everything | Owner; entitlement row `*` with sensitive access, which the pipeline and dashboard refresh also run as |
+| Analyst | Read on `prd_gold` only, with coordinates rounded and partner scope enforced | `GRANT USE CATALOG`, `USE SCHEMA`, `SELECT` on the gold schema; two ABAC policies |
+| Jersey City partner | Jersey City rows only, coordinates rounded to 3 decimals, ride ids pseudonymised | `prd_ops.entitlements` row (`JC`, not sensitive); row filter `rf_scope`, masks `mask_text` / `mask_coord` |
+
+Nothing outside `prd_gold` is granted. Raw trip data stays in the landing Volume and the lakehouse
+schema, and no one but the engineer is granted either. The mechanism was proven with one account
+playing each role (Task 5.2); a second account or a teammate was not used.
+
+## Assumptions
+
+- A trip belongs to the month it starts; files are the unit of reconciliation, not calendar months.
+- Duration floor 1 minute and ceiling 24 hours; rider type must be `member` or `casual`.
+- Trips without a station id are valid trips but are excluded from the station-level questions and counted.
+- The trip file station id equals the GBFS `short_name` (verified by the 91–96% match rates).
+- Rain day is 5 mm or more at Central Park; temperature bands use the daily maximum.
+- Weekdays are Monday to Friday, holidays included; peaks are 07:00–10:00 and 16:00–19:00.
+- GBFS availability from September 2026 is compared with demand from May 2024 to June 2025; it is an indication, not a measured relationship.
+
+## Known limitations
+
+- Free Edition: serverless only, six settable Spark settings, no Spark UI, one pipeline per type at a time, a daily compute quota and a serverless concurrency limit (hit once, Task 4.5), no external locations, no DENY policies, no account-level APIs (CI uses a personal access token).
+- Task counts per query are not recorded: they are visible only in the query profile, which has to be read in the UI.
+- BQ4 rests on hours of snapshots, and on the day of writing on six of them.
+- The row filter was proven for the trip-level object with one account; ABAC tag survival across refresh was tested in dev.
+- Status of manual UI evidence (screenshots, the Git-folder conflict resolution, the failure e-mail) is tracked in `docs/evidence.md`.
+
+## What I would change for a real client
+
+- Authenticate CI as a service principal with OIDC federation (no stored token) instead of a personal access token.
+- Deploy to a paid or trial workspace with a proper prod catalog and separate compute budget; the same bundle needs only a new target.
+- Send alerts to a team channel or paging tool, not a single mailbox, and alert on the SLA check as well as on failures.
+- Collect GBFS continuously and keep months of availability so BQ4 covers the same period as demand.
+- Grant groups instead of `account users`, and add a real partner group with its own entitlement rows.
+- Add unit tests for the transformation logic to CI before `bundle validate` (stretch goal S2).
+
+## Three things I learned
+
+(Drafted with the AI assistant from what happened in this build; to be rewritten in my own words.)
+
+1. A failing deploy can be a sequencing problem, not a code problem: the prod deploy failed because
+   two triggers pointed at objects only `setup_job` creates, and the fix was to run setup and deploy again.
+2. A slow run is not automatically a data problem: the 28-minute build run was Free Edition refusing to
+   start compute, visible only in the pipeline event log, not in the job's task durations.
+3. Reconciliation has to be designed in: the `coalesce(rule, false)` on drop rules and the per-file manifest
+   are what make "Bronze = clean + quarantine" an exact equation instead of a hope, for all 28 files.
+
+## Cleanup
+
+Everything below is reversible only by redeploying, so do it after the assignment is reviewed.
+
+```bash
+databricks bundle destroy -t dev          # dev jobs, pipeline, dashboard
+databricks bundle destroy -t prod         # prod jobs, pipeline, dashboard
+```
+
+Then drop the schemas and the performance-lab tables (`DROP SCHEMA workspace.dev_<layer> CASCADE`,
+same for `prd_`), revoke the `account users` grants on `prd_gold`, drop the policies
+(`DROP POLICY generalise_locations ON SCHEMA workspace.prd_gold`, and `partner_rows`) and the governed
+tags `sensitivity` and `access_scope`, delete the secret scope (`databricks secrets delete-scope a2`),
+revoke the personal access token and the GitHub repository secrets, and delete the local
+`.landing_cache/` (about 10 GB) and the throwaway branches (`conflict-a`, `conflict-b`,
+`drill/broken-library`).
