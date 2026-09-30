@@ -17,10 +17,10 @@ actual command/output captured — nothing is written ahead of verification.
 | E8 | Incident branch run | 3.1 | done — below; screenshot and e-mail to add |
 | E9 | File-arrival and table-update triggered runs | 3.3 | done — below; screenshots to add |
 | E10 | GitHub Actions runs | 3.3 | done — below; screenshots to add |
-| E11 | Tuning results | 4.2 | |
-| E12 | Skew before/after | 4.3 | |
+| E11 | Tuning results | 4.2 done — below |
+| E12 | Skew before/after | 4.3 done — below; profile screenshots to add |
 | E13 | Repair run | 4.3 | |
-| E14 | Layout comparison | 4.4 | |
+| E14 | Layout comparison | 4.4 done — below |
 | E15 | Governance in three entitlement states, grants before/after REVOKE | 5.1–5.3 | |
 | E16 | Lineage graph | 5.4 | |
 
@@ -135,14 +135,24 @@ Run 2026-09-30, prod. Full 28-row table in `README.md` → "Task 4.1".
 - May 2024 JC quarantine 2.1%: 1,997 trips under one minute.
 - Screenshot still to add: `prd_ops.reconciliation` in the SQL editor.
 
-### Task 4.2 — Tuning
--
+### Task 4.2 — Tuning (E11)
+Prod data, 2026-09-30, run `834984070888258`. 10 measurements, each run twice; table in
+`README.md` → "Task 4.2"; recorded values and plans in `prd_ops.perf_results`.
+- **E11** shuffle.partitions auto / 8 / 4000: 1.22 / 1.21 / 1.22 s (no difference); maxPartitionBytes
+  128MB / 16MB: 0.86 / 0.77 s; BROADCAST hint → BroadcastHashJoin 1.45 s (185 ms task time), MERGE hint →
+  SortMergeJoin 1.46 s (754 ms task time), no hint → BroadcastHashJoin 0.91 s.
+- Task counts per run are not measured (query profile only).
 
-### Task 4.3 — Skew/spill/failure
--
+### Task 4.3 — Skew/spill/failure (E12, E13) — in progress
+- **E12** window by `member_type` 5.66 s against `member_type, start_date` 2.11 s (same 463 MB read,
+  task time 8.2 s against 8.0 s, spill 0). Screenshots of both query profiles still to add.
+- Driver memory: `collect()` of 2,076,315 rows succeeded in 88.2 s (run `631840496830221`); it did not fail.
+- **E13** repair run: not yet done.
 
-### Task 4.4 — Layout
--
+### Task 4.4 — Layout (E14)
+- **E14** February 2025, busiest station `6140.05`, week 10–16 Feb, cold run: partitioned 28 files /
+  85,255,721 B, read 7 files (21 pruned) 3.21 MB, 1.81 s; clustered 1 file / 86,212,455 B, read 1 file
+  7.45 MB, 1.20 s. Predictive optimization ENABLE (inherited from the metastore); `CLUSTER BY AUTO` set.
 
 ### Task 4.5 — Monitoring
 -

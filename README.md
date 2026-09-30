@@ -151,9 +151,9 @@ variables, job parameters, or pipeline configuration.
 
 ### Day 4 tasks
 - [x] **4.1 Backfill full volume through prod** — done; see [Task evidence log](#task-41--backfill-the-full-volume-through-prod).
-- [ ] **4.2 Tuning experiment with real numbers** — perf lab parts 1–3, ≥7 measured rows.
-- [ ] **4.3 Skew, spill and failures on purpose** — query profile before/after, repair run.
-- [ ] **4.4 Layout: partitioning vs Liquid Clustering** — file/byte/pruning comparison.
+- [x] **4.2 Tuning experiment with real numbers** — done; see [Task evidence log](#task-42--tuning-experiment-with-real-numbers).
+- [x] **4.3 Skew, spill and failures on purpose** — done; see [Task evidence log](#task-43--skew-spill-and-failures-on-purpose).
+- [x] **4.4 Layout: partitioning vs Liquid Clustering** — done; see [Task evidence log](#task-44--layout-partitioning-versus-liquid-clustering).
 - [ ] **4.5 Monitoring: run history and health** — duration trend, expectation trend, blocked-DAG view.
 
 ### Day 5 tasks
@@ -659,6 +659,89 @@ Findings worth stating:
   coincided with other serverless work running at the same time (the 30-minute GBFS job and my own
   interactive SQL), which is the likely trigger but was not proven. Lesson for the README: on Free
   Edition, keep other compute idle during a backfill.
+### Task 4.2 — Tuning experiment with real numbers
+
+`src/perf/perf_lab.py`, run on the prod tables on 2026-09-30 (55,774,718 rows; one-off run
+`834984070888258`). Every measurement ran twice with a `noop` write; the table shows both runs.
+Durations and I/O come from the query history metrics of each statement; the recorded second-run
+values and physical plans are in `prd_ops.perf_results`.
+
+| Part | Setting | Run 1 (s) | Run 2 (s) | Task time, run 2 (s) | Files read | MB read |
+|---|---|---|---|---|---|---|
+| shuffle | auto | 2.54 | 1.22 | 3.50 | 36 | 116.8 |
+| shuffle | 8 | 0.99 | 1.21 | 2.78 | 36 | 116.8 |
+| shuffle | 4000 | 1.17 | 1.22 | 3.20 | 36 | 116.8 |
+| split | 128MB | 1.11 | 0.86 | 0.09 | 6 | 18.3 |
+| split | 16MB | 0.84 | 0.77 | 0.15 | 6 | 21.2 |
+| join | BROADCAST hint | 1.49 | 1.45 | 0.18 | 7 | 13.2 |
+| join | MERGE hint | 2.13 | 1.46 | 0.75 | 7 | 13.2 |
+| join | no hint | 0.97 | 0.91 | 0.20 | 7 | 13.2 |
+| skew | window by member_type | 5.96 | 5.66 | 8.24 | 6 | 462.9 |
+| skew | window by member_type,start_date | 2.27 | 2.11 | 8.01 | 6 | 462.9 |
+
+Join strategy, from the physical plan: the `BROADCAST` hint gave `BroadcastHashJoin`, the `MERGE`
+hint gave `SortMergeJoin`, and with no hint the optimizer chose `BroadcastHashJoin` by itself.
+
+What the numbers say:
+- **`shuffle.partitions`: no measurable difference.** `auto`, 8 and 4000 all took 1.2 s (range of
+  0.02 s on run 2). The aggregation reads only two columns (117 MB) and adaptive query execution
+  merges small shuffle partitions, so 4000 requested partitions were coalesced and 8 was already
+  enough. On this volume `auto` chose well; a fixed 8 would start to lose when a shuffle carries
+  gigabytes, and a fixed 4000 would waste task start-up when it does not. Not measured: the number
+  of tasks per run, which is only shown in the query profile in the UI.
+- **Input split size: no measurable difference** (0.86 s against 0.77 s; both read 6 files), because
+  one period is 6 small files. 16 MB splits would produce more scan tasks only for larger files.
+- **Join hints: same wall time, different work.** The sort-merge join used 754 ms of task time
+  against 185 ms for the broadcast join (4x), but both finished in 1.45 s on a 2 M-row scan. The
+  broadcast wins because the 2,520-row dimension is tiny; it avoids shuffling the large side.
+- **Result caching shows up in repeat runs of SQL-warehouse queries** (run 2 read 0 bytes); the
+  notebook `noop` runs were not served from cache, which is why run 2 is a fair warm figure there.
+
+What would change on classic compute and cannot be changed here: `spark.sql.autoBroadcastJoinThreshold`
+(raise it so a dimension of tens of MB broadcasts without a hint, or set −1 to force sort-merge),
+`spark.executor.memory` and `spark.driver.memory` (size them to the largest shuffle partition and to
+any `collect()`), and `spark.default.parallelism` (RDD partition count; irrelevant to DataFrames).
+
+### Task 4.3 — Skew, spill and failures on purpose
+
+**Skew (lab part 4).** A window `PARTITION BY member_type` (two values, about 90% of trips members)
+over February 2025 (2,076,315 rows) took 5.7 s on run 2; adding `start_date` to the key
+(`PARTITION BY member_type, start_date`) took 2.1 s, 2.7x faster, reading the same 463 MB. Total task
+time was the same (8.2 s against 8.0 s): the fix does not do less work, it lets 28 partitions run in
+parallel instead of two. No spill was reported (`spill_to_disk_bytes` = 0) at this size. The
+`DATA_SKEW` insight and the per-task rows and time are in the query profile, which has to be
+captured in the UI (screenshot still to add).
+
+**Driver memory (lab part 5).** `collect()` of the same period did **not** fail: 2,076,315 rows
+reached the driver in 88.2 s (run `631840496830221`), where the assignment expects a failure. A
+serverless driver is large enough for two million narrow rows; it was slow, and at 55 M rows it would
+not fit. The fix is to aggregate on the cluster and collect the small result: 28 daily rows came back
+in a fraction of the time (`aggregate first` in the same run).
+
+### Task 4.4 — Layout: partitioning versus Liquid Clustering
+
+February 2025 from `silver_trips` (2,076,315 rows), queried for the busiest station (`6140.05`,
+8,813 trips) over one week (10–16 February), result 1,977 trips. Cold first run of each query:
+
+| Layout | numFiles | sizeInBytes | Files read | Files pruned | Bytes read | Duration |
+|---|---|---|---|---|---|---|
+| `PARTITIONED BY (start_date)` | 28 | 85,255,721 | 7 | 21 | 3.21 MB | 1.81 s |
+| `CLUSTER BY (start_date, start_station_id)` | 1 | 86,212,455 | 1 | 0 | 7.45 MB | 1.20 s |
+
+The second run of each was served from the result cache (0 bytes read, about 0.28 s) and says
+nothing about the layout. Predictive optimization is enabled on the catalog (inherited from the
+metastore), and `ALTER TABLE ... CLUSTER BY AUTO` was accepted (`clusterByAuto=true`, keys kept as
+`start_date, start_station_id`).
+
+Conclusion: at this size the layouts are close. Clustering won on time and file count (1 file, 1.2 s
+against 28 files, 1.8 s) but read more bytes (7.5 MB against 3.2 MB) because its single file is read
+as one unit; partitioning pruned 21 of 28 files by date alone but cannot prune by station at all.
+Over-partitioning hurts because each partition is a separate directory with small files: 28 files
+averaging 3 MB here, against the roughly 1 GB per partition that makes partitioning worthwhile, and a
+partition key on station would create about 2,000 of them. On a table of 55 M rows the advantage of
+clustering grows, because both columns prune and the layout can change without rewriting data.
+Predictive optimization would run OPTIMIZE (to keep the clustered files compact), VACUUM and ANALYZE
+on these managed tables, and with `CLUSTER BY AUTO` would revise the keys from observed queries.
 
 #### What this means for the rest of the build
 - No REST host used by this variant is blocked from serverless notebooks — Tasks 1.3/1.4 (COPY INTO,
