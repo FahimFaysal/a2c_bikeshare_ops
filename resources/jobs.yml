@@ -82,6 +82,7 @@ resources:
             base_parameters:
               run_id: "{{job.run_id}}"
               quarantine_pct: "{{tasks.quality_check.values.quarantine_pct}}"
+          disable_auto_optimization: true # a deliberate failure: serverless must not retry it
 
     release_job:
       # data-driven: runs when a release is certified

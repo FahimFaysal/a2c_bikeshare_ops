@@ -145,8 +145,8 @@ variables, job parameters, or pipeline configuration.
 - [x] **2.3 Gold objects for the business questions** — done in dev; see [Task evidence log](#task-23--gold-objects-for-the-business-questions).
 
 ### Day 3 tasks
-- [ ] **3.1 Build job: DAG, control flow, retries, alerts** — prepare → has_new → build → reconcile_each → quality_check → gate → certify/raise_incident.
-- [ ] **3.2 Three kinds of trigger** — file-arrival, table-update, cron; proven in prod.
+- [x] **3.1 Build job: DAG, control flow, retries, alerts** — done in dev (e-mail receipt to confirm); see [Task evidence log](#task-31--the-build-job).
+- [ ] **3.2 Three kinds of trigger** — trigger table written ([Task evidence log](#task-32--three-kinds-of-trigger)); proven in prod in 3.3.
 - [ ] **3.3 CI/CD** — Git folder branch/PR/conflict, bundle targets, GitHub Actions, end-to-end prod run.
 
 ### Day 4 tasks
@@ -497,6 +497,60 @@ and 4,593 without an end station (4,591 e-bikes, 2 classic).
 
 First-draft business queries and their dev results are in `docs/business-questions.md`. They are
 drafts on one month and one GBFS snapshot; the final answers come from `prd` on Day 5.
+
+### Task 3.1 — The build job
+
+Run on 2026-09-30 in `dev`, each time after dropping one new file with the simulator.
+
+| | Green run | Forced incident run |
+|---|---|---|
+| File dropped | `JC-202503` | `JC-202504` |
+| Command | `bundle run -t dev build_job` | `bundle run -t dev build_job --params max_quarantine_pct=-1` |
+| Run id | `163219437441288` | `555298946603170` |
+| Result | SUCCESS, 343 s | FAILED, 474 s |
+| `prepare` | SUCCESS (44 s) | SUCCESS (25 s) |
+| `has_new` | true | true |
+| `build` (pipeline) | SUCCESS (253 s) | SUCCESS (264 s) |
+| `reconcile_each` (for-each) | SUCCESS, 1 iteration | SUCCESS, 1 iteration |
+| `quality_check` | SUCCESS | SUCCESS |
+| `gate` | true | false |
+| `certify` | SUCCESS | EXCLUDED |
+| `raise_incident` | EXCLUDED | FAILED |
+
+`ops.reconciliation`: 2025-03 jc expected 73,293 = Bronze 73,293 = Silver 73,280 + quarantine 13, OK;
+2025-04 jc expected 81,553 = Bronze 81,553 = Silver 81,530 + quarantine 23, OK.
+`ops.release` has one row (run `163219437441288`, periods `["2025-03"]`, "passed quality gate").
+`ops.incidents` records run `555298946603170`: "quality gate failed (quarantine 0.028%, see reconciliation)".
+The forced run failed only because the threshold was −1; its data reconciled.
+
+Found and fixed: `raise_incident` ran twice in the forced run (attempts 0 and 1) and wrote two
+incident rows, although no retry is configured on it. Serverless jobs retry failed tasks by
+themselves (auto-optimization). The task now sets `disable_auto_optimization: true`, and the
+notebook uses `MERGE` on `run_id` so a repeat can never duplicate an incident. The fix is deployed;
+it is exercised by the next forced failure (Task 4.3).
+
+Own check added to `quality_check.py` (the starter's TODO): the de-duplicated `silver_trips` must
+contain no duplicate `ride_id`, otherwise the gate fails.
+
+Retries:
+
+| Task | Setting | What it does |
+|---|---|---|
+| `prepare` | `max_retries: 2`, `min_retry_interval_millis: 60000` | Up to two more attempts, one minute apart: covers a transient Volume or compute error. Safe because `prepare` skips zips already in the manifest and registers a zip in one commit. |
+| `build` | `max_retries: 1`, `min_retry_interval_millis: 120000` | One more pipeline update after two minutes: this is what restarts the pipeline after a schema-evolution stop. |
+| `raise_incident` | no retry, auto-optimization disabled | A deliberate failure must fail once and send one e-mail. |
+
+### Task 3.2 — Three kinds of trigger
+
+Defined in `resources/jobs.yml`. In `dev` they all show as paused (`mode: development` pauses every
+trigger and schedule); they are proven in `prod` in Task 3.3.
+
+| Job | Trigger | Why this one | What the alternative would do |
+|---|---|---|---|
+| `build_job` | File arrival on `raw/tripdata_zip/` (waits 120 s after the last change, at least 300 s between runs) | The publisher releases a month when it is ready, not on a clock. | A cron-scheduled build either runs before the files land (an empty run, or a partial one if an upload is in flight) or hours after (stale dashboard), and spends compute on days with nothing new. |
+| `release_job` | Table update on `ops.release` | The release summary and dashboard refresh must follow a certified release, never precede it. | A schedule guesses when the build finishes: too early publishes the previous state, and it cannot tell a certified run from a failed gate. Chaining it as a task of the build job would tie a consumer-facing step to the build's run. |
+| `weather_job` | Cron, daily 05:30 | NOAA pushes no events; daily data only changes daily. It also runs the pipeline-SLA check, which must fire even when nothing arrives. | A file-arrival trigger has nothing to watch before the job itself fetches the file. |
+| `gbfs_job` | Cron, every 30 minutes | The public feed is poll-only; 30 minutes is the agreed sampling rate. | An event trigger is not available for a source that emits no event; polling faster multiplies job runs against the compute quota. |
 
 #### What this means for the rest of the build
 - No REST host used by this variant is blocked from serverless notebooks — Tasks 1.3/1.4 (COPY INTO,

@@ -13,8 +13,8 @@ actual command/output captured — nothing is written ahead of verification.
 | E4 | Expectation metrics | 2.2 | done — below; screenshot to add |
 | E5 | COPY INTO second run = 0 rows | 1.3 | done — below |
 | E6 | Secret redaction | 1.4 | run done; screenshot to add |
-| E7 | Build job DAG and green run | 3.1 | |
-| E8 | Incident branch run | 3.1 | |
+| E7 | Build job DAG and green run | 3.1 | done — below; screenshot to add |
+| E8 | Incident branch run | 3.1 | done — below; screenshot and e-mail to add |
 | E9 | File-arrival and table-update triggered runs | 3.3 | |
 | E10 | GitHub Actions runs | 3.3 | |
 | E11 | Tuning results | 4.2 | |
@@ -102,8 +102,14 @@ Run 2026-09-30, dev.
 
 ## Day 3
 
-### Task 3.1 — Build job DAG
--
+### Task 3.1 — Build job DAG (E7, E8)
+Run 2026-09-30, dev. Task-by-task table in `README.md` → "Task 3.1".
+- **E7** green run `163219437441288` (SUCCESS, 343 s): prepare, has_new=true, build, reconcile_each,
+  quality_check, gate=true, certify; raise_incident EXCLUDED. Reconciliation 2025-03 jc OK
+  (73,293 = 73,280 + 13). One row in `ops.release`.
+- **E8** incident run `555298946603170` (`max_quarantine_pct=-1`, FAILED): gate=false, certify
+  EXCLUDED, raise_incident FAILED; `ops.incidents` row "quality gate failed (quarantine 0.028%, ...)".
+- Screenshots still to add: DAG of both runs (with the for-each iteration opened); the failure e-mail.
 
 ### Task 3.2 — Triggers
 -
