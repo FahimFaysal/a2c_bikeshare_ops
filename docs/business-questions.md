@@ -2,8 +2,8 @@
 
 Source: the reconciled prod tables (`workspace.prd_gold`), 55,774,718 trips from May 2024 to June
 2025, every monthly file reconciled to its source (README, Task 4.1). Queries run 2026-09-30.
-BQ4 is **provisional**: it rests on 6 GBFS snapshots (about 2.5 hours), and the assignment asks for
-8 or more hours; it is to be re-run and replaced (see the end of BQ4).
+BQ4 uses 30 GBFS snapshots taken every 30 minutes between 2026-09-30 11:30 and 2026-10-01 01:59 UTC
+(14.5 hours, 07:30 to 21:59 New York time), after the prod pipeline was refreshed on 2026-10-01.
 
 Definitions used throughout: a trip is counted in the month it starts; a rain day has at least
 5 mm of precipitation at Central Park; temperature bands use the day's maximum (below 5, 5–15,
@@ -146,32 +146,50 @@ is 1.0 minute, 41,306 trips are under 1.05) and the real median is somewhat lowe
 percentiles are approximate (`percentile_approx`); the Gold table's trip-weighted medians differ from
 these exact figures by under 0.2 minutes, which is why the exact ones above come from Silver.
 
-## BQ4 — Are the busiest stations the ones that run out? (provisional)
+## BQ4 — Are the busiest stations the ones that run out?
 
 ```sql
+-- the 100 busiest stations (departures over May 2024 - Jun 2025), ordered by how often they were empty
 SELECT system, station_name, departures, snapshots,
-       round(100 * empty_share) AS empty_pct, round(100 * full_share) AS full_pct
+       round(100 * empty_share, 1) AS empty_pct, round(100 * full_share, 1) AS full_pct
 FROM (SELECT * FROM workspace.prd_gold.gold_station_health ORDER BY departures DESC LIMIT 100)
-ORDER BY empty_share DESC, departures DESC LIMIT 20;
+ORDER BY empty_share DESC, departures DESC LIMIT 10;
 ```
 
 The station keys differ between the two sources: the trip files use the GBFS `short_name`. The
 join matches 2,165 of 2,365 NYC start stations (91.5%, 95.9% of NYC trips) and 174 of 183 Jersey
 City stations (95.1%, 93.4% of trips); the unmatched are stations that existed in 2024–25 but are
-not in today's station list.
+not in today's station list. Only snapshots where the station was renting and returning count.
 
-Provisional result (6 snapshots, 11:30–13:59 UTC on 2026-09-30, renting and returning stations
-only): of 2,121 matched stations, 183 were empty in at least one snapshot, 47 in half or more, and
-133 were full in half or more. Among the 100 busiest stations the most often empty were
-11 Ave & W 41 St (empty in half of the snapshots, 157,701 departures) and Columbus Ave & W 72 St,
-1 Ave & E 18 St, Henry St & Grand St and E 10 St & 2 Ave (empty in a third each).
-Across all stations the correlation between demand and the share of time empty is 0.03.
+Results (2,131 matched stations, each with up to 30 snapshots):
 
-**In plain language (provisional).** On this first look, being busy does not predict running empty:
-the correlation is close to zero, and the busiest stations that are often empty are a short list
-worth watching, not a pattern. **Limits that must accompany any final statement:** the snapshots
-cover hours of one day in September 2026, while demand covers May 2024 to June 2025; six snapshots
-give shares in steps of 17%; availability at 11:30–14:00 UTC (morning in New York) says nothing
-about the evening; no cause is claimed. **To do for the final answer:** after at least 8 hours of
-snapshots (from about 19:30 UTC), refresh the prod pipeline, re-run this query, replace the numbers
-above and re-check the correlation.
+| Busy stations most often empty | Departures | Empty | Full |
+|---|---|---|---|
+| W 43 St & 10 Ave | 123,419 | 16.7% | 0% |
+| E 40 St & Park Ave | 112,613 | 16.7% | 26.7% |
+| E 47 St & Park Ave | 93,103 | 16.7% | 50.0% |
+| 1 Ave & E 18 St | 93,041 | 16.7% | 6.7% |
+| W 44 St & 11 Ave | 92,944 | 16.7% | 0% |
+| 11 Ave & W 41 St (busiest of all, 157,701) | 157,701 | 13.3% | 6.7% |
+
+| Busy stations most often full | Departures | Empty | Full |
+|---|---|---|---|
+| 9 Ave & W 33 St | 153,876 | 3.3% | 56.7% |
+| E 47 St & Park Ave | 93,103 | 16.7% | 50.0% |
+| North Moore St & Greenwich St | 90,499 | 10.0% | 40.0% |
+| Great Jones St | 94,540 | 0% | 36.7% |
+
+Across all stations: 557 were empty in at least one snapshot, 81 in a quarter or more, 180 were full
+in a quarter or more. The 214 busiest stations (top 10% by departures) were empty 4.6% of the
+snapshots and full 7.6%; the other 90% were empty 3.7% and full 6.7%. The correlation between
+departures and the share of snapshots empty is 0.04 (0.05 for full).
+
+**In plain language.** The busiest stations are only slightly more likely to run out than the
+rest (4.6% of the time against 3.7%), so demand alone does not tell the client where bikes run out.
+A short list does stand out and matches the rebalancing pattern from BQ2: E 47 St & Park Ave, a
+station that fills in the morning and drains in the evening, was empty a sixth of the time and
+full half of the time, and W 43 St & 10 Ave, the biggest morning drain, was empty a sixth of the
+time. These are the first stations to look at. **Limits:** the snapshots cover about 14 hours of one
+day in autumn 2026, while demand covers May 2024 to June 2025; 30 snapshots give shares in steps of
+3.3%; some stations were renting and returning in only a few snapshots (E 85 St & 3 Ave appears in
+6); the data shows co-occurrence, and no cause is claimed.

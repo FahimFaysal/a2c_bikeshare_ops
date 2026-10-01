@@ -6,7 +6,7 @@ bike-share rebalancing and station expansion.
 
 Status: built incrementally Day 1 → Day 5 per the assignment's day plan; all tasks are implemented and
 verified in the workspace except the items listed under Known limitations and in `docs/evidence.md`
-(screenshots, the Git-folder conflict in the UI, BQ4 final numbers).
+(screenshots and the Git-folder conflict in the UI).
 Nothing below is written ahead of being verified.
 
 ---
@@ -162,7 +162,7 @@ variables, job parameters, or pipeline configuration.
 - [x] **5.1 Access control and table lifecycle** — done; see [Task evidence log](#task-51--access-control-and-the-table-lifecycle).
 - [x] **5.2 Row filter and column mask** — done; see [Task evidence log](#task-52--row-filter-and-column-mask).
 - [x] **5.3 ABAC: two policies, many tables** — done; see [Task evidence log](#task-53--abac-two-policies-many-tables).
-- [x] **5.4 Dashboard, business answers and lineage** — built and refreshing in prod; BQ4 provisional, screenshots to add; see [Task evidence log](#task-54--dashboard-and-lineage).
+- [x] **5.4 Dashboard, business answers and lineage** — built and refreshing in prod; BQ4 final, screenshots to add; see [Task evidence log](#task-54--dashboard-and-lineage).
 - [ ] **5.5 Client pack and the demo** — README, evidence pack, demo script, exam notes.
 
 ## 5. Repository layout (Appendix A.2)
@@ -912,7 +912,7 @@ Lineage (from the Unity Catalog lineage API): `bronze_trips` → `silver_trips_c
 `gold_station_health`; `gold_station_flow` has upstreams `silver_trips` and `dim_station`. The
 graph screenshot from Catalog Explorer is still to be captured.
 
-BQ1–BQ4 with SQL, results and plain-language answers: `docs/business-questions.md` (BQ4 provisional).
+BQ1–BQ4 with SQL, results and plain-language answers: `docs/business-questions.md`.
 
 #### What this means for the rest of the build
 - No REST host used by this variant is blocked from serverless notebooks — Tasks 1.3/1.4 (COPY INTO,
@@ -974,7 +974,7 @@ playing each role (Task 5.2); a second account or a teammate was not used.
 
 - Free Edition: serverless only, six settable Spark settings, no Spark UI, one pipeline per type at a time, a daily compute quota and a serverless concurrency limit (hit once, Task 4.5), no external locations, no DENY policies, no account-level APIs (CI uses a personal access token).
 - Task counts per query are not recorded: they are visible only in the query profile, which has to be read in the UI.
-- BQ4 rests on hours of snapshots, and on the day of writing on six of them.
+- BQ4 rests on 30 availability snapshots covering 14.5 hours of one day, compared with 14 months of demand.
 - The row filter was proven for the trip-level object with one account; ABAC tag survival across refresh was tested in dev.
 - Status of manual UI evidence (screenshots, the Git-folder conflict resolution, the failure e-mail) is tracked in `docs/evidence.md`.
 

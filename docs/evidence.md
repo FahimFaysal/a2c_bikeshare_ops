@@ -192,7 +192,8 @@ Prod, same query on `prd_gold.gold_trip_detail_recent`:
 ### Task 5.4 — Dashboard
 - Dashboard as code: `src/dashboards/client_dashboard.lvdash.json`, `resources/dashboard.yml`, refresh task in
   the release job; deployed to dev and prod by the merge of PR #2 (Actions run `36710937297`).
-- BQ1–BQ4 SQL, results and interpretation: `docs/business-questions.md` (BQ4 provisional).
+- BQ1–BQ4 SQL, results and interpretation: `docs/business-questions.md`. BQ4 final: prod pipeline refresh
+  `f157fb` on 2026-10-01, 30 snapshots over 14.5 h, 2,131 stations, correlation 0.04.
 - Lineage graph (E16) and the published dashboard link: to add.
 
 ### Task 5.5 — Client pack
