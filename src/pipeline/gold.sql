@@ -1,7 +1,7 @@
 -- src/pipeline/gold.sql — consumer-facing objects, written to the gold schema by fully qualified name
 CREATE OR REFRESH MATERIALIZED VIEW ${a2.gold}.gold_demand_hourly
 CLUSTER BY (start_date)
-COMMENT 'Trips per hour by system, rider type and bike type'
+COMMENT 'Trips per hour by system, rider type and bike type (BQ1 heatmap)'
 AS SELECT
   system, start_date, start_hour, start_dow, member_type, rideable_type,
   count(*)                                 AS trips,

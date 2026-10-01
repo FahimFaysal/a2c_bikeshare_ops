@@ -40,8 +40,8 @@ targets:
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
     variables:
       env: prd
-      gbfs_pause: UNPAUSED
-      # set to PAUSED and redeploy after 8+ hours of snapshots
+      gbfs_pause: PAUSED
+      # 8+ hours of 30-minute snapshots are collected; polling stays off so the quota goes to the pipeline
     # Target override (not a variable): a setting that exists only in prod is merged over the
     # shared job definition. The client is told when a release is published; dev stays quiet.
     resources:

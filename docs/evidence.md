@@ -8,7 +8,7 @@ actual command/output captured — nothing is written ahead of verification.
 | # | Evidence | Task | Status |
 |---|---|---|---|
 | E1 | Smoke-test results | 1.1 | done — README "Task 1.1" |
-| E2 | Reconciliation for every period | 4.1 | |
+| E2 | Reconciliation for every period | 4.1 | done — below; screenshot to add |
 | E3 | Schema-evolution event | 2.1 | done — below; screenshot to add |
 | E4 | Expectation metrics | 2.2 | done — below; screenshot to add |
 | E5 | COPY INTO second run = 0 rows | 1.3 | done — below |
@@ -17,11 +17,11 @@ actual command/output captured — nothing is written ahead of verification.
 | E8 | Incident branch run | 3.1 | done — below; screenshot and e-mail to add |
 | E9 | File-arrival and table-update triggered runs | 3.3 | done — below; screenshots to add |
 | E10 | GitHub Actions runs | 3.3 | done — below; screenshots to add |
-| E11 | Tuning results | 4.2 | |
-| E12 | Skew before/after | 4.3 | |
-| E13 | Repair run | 4.3 | |
-| E14 | Layout comparison | 4.4 | |
-| E15 | Governance in three entitlement states, grants before/after REVOKE | 5.1–5.3 | |
+| E11 | Tuning results | 4.2 done — below |
+| E12 | Skew before/after | 4.3 done — below; profile screenshots to add |
+| E13 | Repair run | 4.3 | done — below; screenshots to add |
+| E14 | Layout comparison | 4.4 done — below |
+| E15 | Governance in three entitlement states, grants before/after REVOKE | 5.1–5.3 | done — below; screenshots to add |
 | E16 | Lineage graph | 5.4 | |
 
 ## Day 1
@@ -126,34 +126,75 @@ Run 2026-09-30, dev. Task-by-task table in `README.md` → "Task 3.1".
 
 ## Day 4
 
-### Task 4.1 — Backfill
--
+### Task 4.1 — Backfill (E2)
+Run 2026-09-30, prod. Full 28-row table in `README.md` → "Task 4.1".
+- **E2** `prd_ops.reconciliation`: 28 of 28 period/system rows OK. Bronze 55,789,305 = clean 55,774,740
+  + quarantine 14,565; `silver_trips` 55,774,718 (22 duplicates removed); 11 releases; 0 incidents.
+- 11 build runs, all FILE_ARRIVAL and SUCCESS, 6,057 s in total; slowest `943066878271874` (October 2024, 1,687 s)
+  caused by Free Edition serverless `RESOURCE_EXHAUSTED` and five automatic pipeline retries.
+- May 2024 JC quarantine 2.1%: 1,997 trips under one minute.
+- Screenshot still to add: `prd_ops.reconciliation` in the SQL editor.
 
-### Task 4.2 — Tuning
--
+### Task 4.2 — Tuning (E11)
+Prod data, 2026-09-30, run `834984070888258`. 10 measurements, each run twice; table in
+`README.md` → "Task 4.2"; recorded values and plans in `prd_ops.perf_results`.
+- **E11** shuffle.partitions auto / 8 / 4000: 1.22 / 1.21 / 1.22 s (no difference); maxPartitionBytes
+  128MB / 16MB: 0.86 / 0.77 s; BROADCAST hint → BroadcastHashJoin 1.45 s (185 ms task time), MERGE hint →
+  SortMergeJoin 1.46 s (754 ms task time), no hint → BroadcastHashJoin 0.91 s.
+- Task counts per run are not measured (query profile only).
 
-### Task 4.3 — Skew/spill/failure
--
+### Task 4.3 — Skew/spill/failure (E12, E13)
+- **E12** window by `member_type` 5.66 s against `member_type, start_date` 2.11 s (same 463 MB read,
+  task time 8.2 s against 8.0 s, spill 0). Screenshots of both query profiles still to add.
+- Driver memory: `collect()` of 2,076,315 rows succeeded in 88.2 s (run `631840496830221`); it did not fail.
+- **E13** drill run `241408831117189` (dev): `%pip install this-package-does-not-exist==0.0.1` made
+  `reconcile_each` FAIL (PipError), four downstream tasks UPSTREAM_FAILED; after removing the line and
+  `repair-run --rerun-all-failed-tasks`, `prepare`/`has_new`/`build` kept attempt 0 and `reconcile_each`,
+  `quality_check`, `gate`, `certify`, `raise_incident` re-ran as attempt 1 (SUCCESS / EXCLUDED).
+  Reconciliation 2025-05 jc 93,227 = 93,198 + 29 OK. Screenshots of the failed DAG and the repair view to add.
 
-### Task 4.4 — Layout
--
+### Task 4.4 — Layout (E14)
+- **E14** February 2025, busiest station `6140.05`, week 10–16 Feb, cold run: partitioned 28 files /
+  85,255,721 B, read 7 files (21 pruned) 3.21 MB, 1.81 s; clustered 1 file / 86,212,455 B, read 1 file
+  7.45 MB, 1.20 s. Predictive optimization ENABLE (inherited from the metastore); `CLUSTER BY AUTO` set.
 
 ### Task 4.5 — Monitoring
--
+- 11 prod build runs: 248–626 s normally; slowest `943066878271874` 1,687 s from five automatic pipeline
+  retries after `RESOURCE_EXHAUSTED` on serverless start-up (not data).
+- Expectation trend per update: `stations_present` pass rate 99.74% (first batch) and 99.61% (last); other rules flat.
+- Blocked-DAG view: UPSTREAM_FAILED vs EXCLUDED, from the repair drill. Screenshots to add.
 
 ## Day 5
 
-### Task 5.1 — Access control
--
+### Task 5.1 — Access control (E15, grants)
+- Prod, 2026-09-30. `SHOW GRANTS ON SCHEMA workspace.prd_gold` before REVOKE: `account users` SELECT +
+  USE SCHEMA; after `REVOKE SELECT`: only USE SCHEMA (exactly the SELECT row removed); restored after.
+- `scratch_undrop` (116 rows): DROP, listed by `SHOW TABLES DROPPED IN workspace.prd_ops`, `UNDROP`,
+  116 rows again.
+- Screenshots of both `SHOW GRANTS` outputs and the dropped-table list still to add.
 
-### Task 5.2 — Row filter / column mask
--
+### Task 5.2 — Row filter / column mask (E15, three states)
+Prod, same query on `prd_gold.gold_trip_detail_recent`:
+- State 1 (`*`, sensitive): JC 97,081 rows, NYC 4,757,496; sample ride `0000AFA56A504706`; avg lat 40.732294, max 40.75453.
+- State 2 (`JC`, not sensitive): JC 97,081 only; sample ride `id_00002ccebbc6`; avg lat 40.732279, max 40.755.
+- State 3 (back to `*`): identical to state 1.
+- Dev rehearsal earlier the same day matched (JC only there, since its 30-day window held no NYC rows).
+- Screenshots of the three result sets still to add. No teammate invited, so no second-user run.
 
-### Task 5.3 — ABAC
--
+### Task 5.3 — ABAC (E15, tagged objects)
+- Prod: 9 column tags; `SHOW POLICIES ON SCHEMA workspace.prd_gold` → `generalise_locations` (COLUMN_MASK),
+  `partner_rows` (ROW_FILTER).
+- Partner state: `gold_demand_hourly` JC 1,240,100 only (full access adds NYC 54,534,618);
+  `gold_station_health` 81 JC stations, max lat 40.755, max lng −74.024; `gold_station_flow` JC 528 rows, max lat 40.85.
+- Tags survive refresh: dev full refresh (update `8000d2`) of three tagged Gold views: 9 of 9 tags and both policies intact.
+- Screenshots to add: `SHOW POLICIES`, partner-state results.
 
 ### Task 5.4 — Dashboard
--
+- Dashboard as code: `src/dashboards/client_dashboard.lvdash.json`, `resources/dashboard.yml`, refresh task in
+  the release job; deployed to dev and prod by the merge of PR #2 (Actions run `36710937297`).
+- BQ1–BQ4 SQL, results and interpretation: `docs/business-questions.md`. BQ4 final: prod pipeline refresh
+  `f157fb` on 2026-10-01, 30 snapshots over 14.5 h, 2,131 stations, correlation 0.04.
+- Lineage graph (E16) and the published dashboard link: to add.
 
 ### Task 5.5 — Client pack
 -
