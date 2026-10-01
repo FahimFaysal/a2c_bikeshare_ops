@@ -29,7 +29,27 @@ Verified in `dev` on 2026-10-01 (pipeline updates `b5e14e` onwards):
 - Cleanup: the synthetic file and its row in the dev reference table were deleted and the table was
   rebuilt with a full refresh of `dim_station_history` (2,520 rows, 0 test rows).
 
-Not done: in prod the second real snapshot (`station_information_20261001T000011Z.json`) has landed
-but has not been loaded into the prod reference table, because loading it needs a prod `setup_job`
-run; with it, the first prod comparison of two real snapshots would be available. Whether any real
-station changed between 30 September and 1 October is therefore not known.
+## Prod result (2026-10-01)
+
+After the merge of the stretch pull requests, `setup_job` loaded the second real snapshot
+(`station_information_20261001T000011Z.json`) into `prd_lakehouse.ref_station_information` (two
+snapshots, versions `1790767813` and `1790812803`) and the prod pipeline was refreshed (update
+`d00369`, COMPLETED). `dim_station_history` holds 2,529 rows for 2,520 stations: 2,520 current and 9
+closed. **Nine real stations changed between 30 September and 1 October**, all in capacity, for example:
+
+| Station | Capacity before | Capacity after |
+|---|---|---|
+| 1 Ave & E 42 St | 0 | 62 |
+| 51 Ave & Van Loon St | 0 | 24 |
+| 8 Ave & W 55 St | 71 | 33 |
+| W 17 St & 7 Ave | 47 | 17 |
+| 2 Ave & E 122 St | 18 | 25 |
+| Cleveland Pl & Spring St | 16 | 33 |
+
+Names and coordinates did not change. Several "before" values are 0, which the feed also shows for
+many stations in the first snapshot; whether that is a real capacity or a placeholder in the feed was
+not investigated, so those rows show that the flow detects a change, not what the true capacity was.
+
+The same prod refresh was the first run of the merged `silver.py` (now importing `transforms.py`):
+`silver_trips` is still 55,774,718 rows with 0 duplicate keys, and reconciliation still shows Bronze
+55,789,305 = Silver clean + quarantine with no row not OK, so the refactor changed no result.
