@@ -13,6 +13,8 @@ resources:
         - file:
             path: ../src/pipeline/silver.py
         - file:
+            path: ../src/pipeline/station_history.py
+        - file:
             path: ../src/pipeline/gold.sql
       configuration:
         # read with spark.conf.get() in Python, ${key} in SQL
