@@ -4,8 +4,10 @@ Individual submission for BJIT Databricks Data Engineer Assignment 2C (Variant C
 Client (fictional): **Riverline Urban Planning**, advising a city transport department on
 bike-share rebalancing and station expansion.
 
-Status: work in progress, built incrementally Day 1 → Day 5 per the assignment's day plan.
-This README is updated as each task is completed; nothing below is written ahead of being verified.
+Status: built incrementally Day 1 → Day 5 per the assignment's day plan; all tasks are implemented and
+verified in the workspace except the items listed under Known limitations and in `docs/evidence.md`
+(screenshots and the Git-folder conflict in the UI).
+Nothing below is written ahead of being verified.
 
 ---
 
@@ -150,17 +152,17 @@ variables, job parameters, or pipeline configuration.
 - [ ] **3.3 CI/CD** — Git folder branch/PR/conflict, bundle targets, GitHub Actions, end-to-end prod run.
 
 ### Day 4 tasks
-- [ ] **4.1 Backfill full volume through prod** — remaining 13 months, >50M Silver rows.
-- [ ] **4.2 Tuning experiment with real numbers** — perf lab parts 1–3, ≥7 measured rows.
-- [ ] **4.3 Skew, spill and failures on purpose** — query profile before/after, repair run.
-- [ ] **4.4 Layout: partitioning vs Liquid Clustering** — file/byte/pruning comparison.
-- [ ] **4.5 Monitoring: run history and health** — duration trend, expectation trend, blocked-DAG view.
+- [x] **4.1 Backfill full volume through prod** — done; see [Task evidence log](#task-41--backfill-the-full-volume-through-prod).
+- [x] **4.2 Tuning experiment with real numbers** — done; see [Task evidence log](#task-42--tuning-experiment-with-real-numbers).
+- [x] **4.3 Skew, spill and failures on purpose** — done; see [Task evidence log](#task-43--skew-spill-and-failures-on-purpose).
+- [x] **4.4 Layout: partitioning vs Liquid Clustering** — done; see [Task evidence log](#task-44--layout-partitioning-versus-liquid-clustering).
+- [x] **4.5 Monitoring: run history and health** — done; see [Task evidence log](#task-45--monitoring-run-history-and-health).
 
 ### Day 5 tasks
-- [ ] **5.1 Access control and table lifecycle** — GRANT/REVOKE/SHOW GRANTS, DROP/UNDROP.
-- [ ] **5.2 Row filter and column mask** — 3 entitlement states proven.
-- [ ] **5.3 ABAC: two policies, many tables** — governed tags + schema-level policies.
-- [ ] **5.4 Dashboard, business answers and lineage** — ≥4 visuals, BQ1–BQ4, lineage graph.
+- [x] **5.1 Access control and table lifecycle** — done; see [Task evidence log](#task-51--access-control-and-the-table-lifecycle).
+- [x] **5.2 Row filter and column mask** — done; see [Task evidence log](#task-52--row-filter-and-column-mask).
+- [x] **5.3 ABAC: two policies, many tables** — done; see [Task evidence log](#task-53--abac-two-policies-many-tables).
+- [x] **5.4 Dashboard, business answers and lineage** — built and refreshing in prod; BQ4 final, screenshots to add; see [Task evidence log](#task-54--dashboard-and-lineage).
 - [ ] **5.5 Client pack and the demo** — README, evidence pack, demo script, exam notes.
 
 ## 5. Repository layout (Appendix A.2)
@@ -202,8 +204,13 @@ Files marked Day 5 (`resources/dashboard.yml`, `src/governance/*.sql`, the dashb
 
 - **Mandatory**: all Day 1–4 tasks, plus Day 5 governance/dashboard/README/evidence/demo — this is
   the scored 100-point rubric.
-- **Optional (bonus, ≤5 pts)**: Lakeflow Connect Jira connector, pytest/chispa unit tests in CI,
-  SCD Type 2 station dimension — attempted only after everything else is done.
+- **Optional (bonus, ≤5 pts)**: attempted after everything else.
+  - S1 Jira connector: **not done**; it needs a Jira project and the Beta connector, which this workspace does not have.
+  - S2 pytest/chispa tests in CI: done, 15 tests and a `test` job before `bundle validate`
+    (pull request [#7](https://github.com/FahimFaysal/a2c_bikeshare_ops/pull/7), `docs/stretch-s2-tests.md`).
+  - S3 SCD Type 2 station dimension: done and tested in dev with a synthetic changed snapshot
+    (pull request [#8](https://github.com/FahimFaysal/a2c_bikeshare_ops/pull/8), `docs/stretch-s3-scd2.md`).
+    Both are open pull requests until merged; neither is in the prod deployment yet.
 - **Free Edition limitations to record, not work around**: no Spark UI/cache/persist/Scala/R; only
   6 Spark settings changeable; no classic clusters; no external tables; DENY policies unavailable;
   no account-level APIs (PAT-based CI/CD instead of OIDC service principal); governed tags/ABAC
@@ -597,6 +604,321 @@ different settings over the shared definition for one target only.
 Still to do (workspace UI): Git folder branch `feature/gold-kpis` with a PR, the merge-conflict
 exercise, and pausing GBFS through a PR after 8+ hours of snapshots.
 
+### Task 4.1 — Backfill the full volume through prod
+
+`tools/drop_files.py --env prd --batch 6 --interval 1200` delivered the remaining 26 zips after the
+February drop (11:44 to 14:22 UTC on 2026-09-30). Each drop fired the file-arrival trigger; runs
+that arrived while one was active queued (`max_concurrent_runs: 1`). 11 build runs in total,
+all SUCCESS, all trigger FILE_ARRIVAL, 6,057 s of run time (runs 248 s to 1,687 s).
+
+Totals from `prd_ops.reconciliation`: Bronze **55,789,305** = Silver clean 55,774,740 + quarantine
+14,565. The de-duplicated `prd_lakehouse.silver_trips` holds **55,774,718** rows (22 duplicate
+`ride_id`s removed; 0 duplicate keys remain). 11 releases in `prd_ops.release`, 0 rows in
+`prd_ops.incidents`. All 28 period/system rows are OK:
+
+| Period | System | Expected (manifest) | Bronze | Silver clean | Quarantine | Status |
+|---|---|---|---|---|---|---|
+| 2024-05 | JC | 97,479 | 97,479 | 95,432 | 2,047 | OK |
+| 2024-05 | NYC | 4,133,961 | 4,133,961 | 4,132,843 | 1,118 | OK |
+| 2024-06 | JC | 111,115 | 111,115 | 111,058 | 57 | OK |
+| 2024-06 | NYC | 4,783,576 | 4,783,576 | 4,782,160 | 1,416 | OK |
+| 2024-07 | JC | 112,443 | 112,443 | 112,387 | 56 | OK |
+| 2024-07 | NYC | 4,722,896 | 4,722,896 | 4,721,591 | 1,305 | OK |
+| 2024-08 | JC | 106,451 | 106,451 | 106,413 | 38 | OK |
+| 2024-08 | NYC | 4,603,575 | 4,603,575 | 4,602,375 | 1,200 | OK |
+| 2024-09 | JC | 115,558 | 115,558 | 115,531 | 27 | OK |
+| 2024-09 | NYC | 4,997,898 | 4,997,898 | 4,996,775 | 1,123 | OK |
+| 2024-10 | JC | 118,307 | 118,307 | 118,279 | 28 | OK |
+| 2024-10 | NYC | 5,150,054 | 5,150,054 | 5,149,199 | 855 | OK |
+| 2024-11 | JC | 85,294 | 85,294 | 85,274 | 20 | OK |
+| 2024-11 | NYC | 3,710,134 | 3,710,134 | 3,709,232 | 902 | OK |
+| 2024-12 | JC | 54,833 | 54,833 | 54,817 | 16 | OK |
+| 2024-12 | NYC | 2,311,171 | 2,311,171 | 2,310,767 | 404 | OK |
+| 2025-01 | JC | 50,611 | 50,611 | 50,590 | 21 | OK |
+| 2025-01 | NYC | 2,124,475 | 2,124,475 | 2,124,187 | 288 | OK |
+| 2025-02 | JC | 45,255 | 45,255 | 45,247 | 8 | OK |
+| 2025-02 | NYC | 2,031,257 | 2,031,257 | 2,030,942 | 315 | OK |
+| 2025-03 | JC | 73,293 | 73,293 | 73,280 | 13 | OK |
+| 2025-03 | NYC | 3,168,271 | 3,168,271 | 3,167,722 | 549 | OK |
+| 2025-04 | JC | 81,553 | 81,553 | 81,530 | 23 | OK |
+| 2025-04 | NYC | 3,724,596 | 3,724,596 | 3,723,968 | 628 | OK |
+| 2025-05 | JC | 93,227 | 93,227 | 93,198 | 29 | OK |
+| 2025-05 | NYC | 4,325,553 | 4,325,553 | 4,324,604 | 949 | OK |
+| 2025-06 | JC | 97,124 | 97,124 | 97,086 | 38 | OK |
+| 2025-06 | NYC | 4,759,345 | 4,759,345 | 4,758,253 | 1,092 | OK |
+
+Each NYC month is within rounding of the assignment's row-count reference (for example May 2024
+4,133,961 against 4.13M, October 2024 5,150,054 against 5.1M, February 2025 2,031,257 against 2.03M).
+The published files hold the trips the system reports, so the file count is the source of truth.
+
+Findings worth stating:
+- **May 2024 Jersey City quarantined 2.1%** (2,047 of 97,479), the only month above the gate's 2.0%
+  limit. 1,997 of those are trips under one minute (shortest 0.0 minutes), 50 over 24 hours, 8 ending
+  before they start. The publisher's under-60-second filter was evidently not applied to this
+  file, so the duration floor does its job here. The gate did not trip because it judges each
+  run: that run also held NYC May, so the combined rate was 0.07%.
+- **Slowest run: `943066878271874`, 1,687 s against about 300–450 s for a typical run.** Cause:
+  Free Edition refused to start serverless compute for the pipeline
+  (`RESOURCE_EXHAUSTED: You've hit the limit for severless compute for free usage`). The pipeline
+  retried by itself (cause `RETRY_ON_FAILURE`) five times with growing waits and succeeded on the
+  sixth attempt; the same thing happened shortly before (12:40, two attempts) and after (13:19,
+  five attempts). It was not data volume, not schema evolution and not a full refresh. The failures
+  coincided with other serverless work running at the same time (the 30-minute GBFS job and my own
+  interactive SQL), which is the likely trigger but was not proven. Lesson for the README: on Free
+  Edition, keep other compute idle during a backfill.
+### Task 4.2 — Tuning experiment with real numbers
+
+`src/perf/perf_lab.py`, run on the prod tables on 2026-09-30 (55,774,718 rows; one-off run
+`834984070888258`). Every measurement ran twice with a `noop` write; the table shows both runs.
+Durations and I/O come from the query history metrics of each statement; the recorded second-run
+values and physical plans are in `prd_ops.perf_results`.
+
+| Part | Setting | Run 1 (s) | Run 2 (s) | Task time, run 2 (s) | Files read | MB read |
+|---|---|---|---|---|---|---|
+| shuffle | auto | 2.54 | 1.22 | 3.50 | 36 | 116.8 |
+| shuffle | 8 | 0.99 | 1.21 | 2.78 | 36 | 116.8 |
+| shuffle | 4000 | 1.17 | 1.22 | 3.20 | 36 | 116.8 |
+| split | 128MB | 1.11 | 0.86 | 0.09 | 6 | 18.3 |
+| split | 16MB | 0.84 | 0.77 | 0.15 | 6 | 21.2 |
+| join | BROADCAST hint | 1.49 | 1.45 | 0.18 | 7 | 13.2 |
+| join | MERGE hint | 2.13 | 1.46 | 0.75 | 7 | 13.2 |
+| join | no hint | 0.97 | 0.91 | 0.20 | 7 | 13.2 |
+| skew | window by member_type | 5.96 | 5.66 | 8.24 | 6 | 462.9 |
+| skew | window by member_type,start_date | 2.27 | 2.11 | 8.01 | 6 | 462.9 |
+
+Join strategy, from the physical plan: the `BROADCAST` hint gave `BroadcastHashJoin`, the `MERGE`
+hint gave `SortMergeJoin`, and with no hint the optimizer chose `BroadcastHashJoin` by itself.
+
+What the numbers say:
+- **`shuffle.partitions`: no measurable difference.** `auto`, 8 and 4000 all took 1.2 s (range of
+  0.02 s on run 2). The aggregation reads only two columns (117 MB) and adaptive query execution
+  merges small shuffle partitions, so 4000 requested partitions were coalesced and 8 was already
+  enough. On this volume `auto` chose well; a fixed 8 would start to lose when a shuffle carries
+  gigabytes, and a fixed 4000 would waste task start-up when it does not. Not measured: the number
+  of tasks per run, which is only shown in the query profile in the UI.
+- **Input split size: no measurable difference** (0.86 s against 0.77 s; both read 6 files), because
+  one period is 6 small files. 16 MB splits would produce more scan tasks only for larger files.
+- **Join hints: same wall time, different work.** The sort-merge join used 754 ms of task time
+  against 185 ms for the broadcast join (4x), but both finished in 1.45 s on a 2 M-row scan. The
+  broadcast wins because the 2,520-row dimension is tiny; it avoids shuffling the large side.
+- **Result caching shows up in repeat runs of SQL-warehouse queries** (run 2 read 0 bytes); the
+  notebook `noop` runs were not served from cache, which is why run 2 is a fair warm figure there.
+
+What would change on classic compute and cannot be changed here: `spark.sql.autoBroadcastJoinThreshold`
+(raise it so a dimension of tens of MB broadcasts without a hint, or set −1 to force sort-merge),
+`spark.executor.memory` and `spark.driver.memory` (size them to the largest shuffle partition and to
+any `collect()`), and `spark.default.parallelism` (RDD partition count; irrelevant to DataFrames).
+
+### Task 4.3 — Skew, spill and failures on purpose
+
+**Skew (lab part 4).** A window `PARTITION BY member_type` (two values, about 90% of trips members)
+over February 2025 (2,076,315 rows) took 5.7 s on run 2; adding `start_date` to the key
+(`PARTITION BY member_type, start_date`) took 2.1 s, 2.7x faster, reading the same 463 MB. Total task
+time was the same (8.2 s against 8.0 s): the fix does not do less work, it lets 28 partitions run in
+parallel instead of two. No spill was reported (`spill_to_disk_bytes` = 0) at this size. The
+`DATA_SKEW` insight and the per-task rows and time are in the query profile, which has to be
+captured in the UI (screenshot still to add).
+
+**Driver memory (lab part 5).** `collect()` of the same period did **not** fail: 2,076,315 rows
+reached the driver in 88.2 s (run `631840496830221`), where the assignment expects a failure. A
+serverless driver is large enough for two million narrow rows; it was slow, and at 55 M rows it would
+not fit. The fix is to aggregate on the cluster and collect the small result: 28 daily rows came back
+in a fraction of the time (`aggregate first` in the same run).
+
+**Library failure and repair.** On branch `drill/broken-library` (never merged) the first cell of
+`reconcile_period.py` was changed to `%pip install this-package-does-not-exist==0.0.1`, deployed to
+`dev`, and `JC-202505` was dropped. Build run `241408831117189`:
+
+| Task | First attempt | After repair |
+|---|---|---|
+| `prepare` | SUCCESS | kept (not re-run) |
+| `has_new` | SUCCESS | kept |
+| `build` (pipeline) | SUCCESS | kept |
+| `reconcile_each` | **FAILED** | re-ran: SUCCESS |
+| `quality_check` | UPSTREAM_FAILED | re-ran: SUCCESS |
+| `gate` | UPSTREAM_FAILED | re-ran: true |
+| `certify` | UPSTREAM_FAILED | re-ran: SUCCESS |
+| `raise_incident` | UPSTREAM_FAILED | re-ran: EXCLUDED (false branch not taken) |
+
+Diagnosis, in the order followed: the failing task was `reconcile_each`; the iteration's error is
+`PipError: ... pip install ... this-package-does-not-exist==0.0.1 returned non-zero exit status 1`, so
+the notebook never reached its own code (two iteration attempts appear, the second being the
+serverless automatic retry). Everything after it is `UPSTREAM_FAILED`: they did not run, they did not
+fail. The input data was fine (`prepare` and `build` succeeded, Bronze was already loaded). The fix
+was to remove the line, redeploy and use **Repair run** with "re-run all failed tasks" (same run id,
+`attempt=1` for the five tasks that re-ran). Only the failed task and its dependents re-ran, and the
+repair used the freshly deployed notebook. Evidence it worked: `dev_ops.reconciliation` for the run
+shows 2025-05 jc 93,227 = 93,227 = 93,198 + 29, OK, and `dev_ops.release` has a row for the run.
+
+### Task 4.4 — Layout: partitioning versus Liquid Clustering
+
+February 2025 from `silver_trips` (2,076,315 rows), queried for the busiest station (`6140.05`,
+8,813 trips) over one week (10–16 February), result 1,977 trips. Cold first run of each query:
+
+| Layout | numFiles | sizeInBytes | Files read | Files pruned | Bytes read | Duration |
+|---|---|---|---|---|---|---|
+| `PARTITIONED BY (start_date)` | 28 | 85,255,721 | 7 | 21 | 3.21 MB | 1.81 s |
+| `CLUSTER BY (start_date, start_station_id)` | 1 | 86,212,455 | 1 | 0 | 7.45 MB | 1.20 s |
+
+The second run of each was served from the result cache (0 bytes read, about 0.28 s) and says
+nothing about the layout. Predictive optimization is enabled on the catalog (inherited from the
+metastore), and `ALTER TABLE ... CLUSTER BY AUTO` was accepted (`clusterByAuto=true`, keys kept as
+`start_date, start_station_id`).
+
+Conclusion: at this size the layouts are close. Clustering won on time and file count (1 file, 1.2 s
+against 28 files, 1.8 s) but read more bytes (7.5 MB against 3.2 MB) because its single file is read
+as one unit; partitioning pruned 21 of 28 files by date alone but cannot prune by station at all.
+Over-partitioning hurts because each partition is a separate directory with small files: 28 files
+averaging 3 MB here, against the roughly 1 GB per partition that makes partitioning worthwhile, and a
+partition key on station would create about 2,000 of them. On a table of 55 M rows the advantage of
+clustering grows, because both columns prune and the layout can change without rewriting data.
+Predictive optimization would run OPTIMIZE (to keep the clustered files compact), VACUUM and ANALYZE
+on these managed tables, and with `CLUSTER BY AUTO` would revise the keys from observed queries.
+
+### Task 4.5 — Monitoring: run history and health
+
+**Run history (prod build job, 11 runs, all FILE_ARRIVAL and SUCCESS).**
+
+| Run (start UTC) | Periods certified (from `ops.release`) | Rows | Duration | Note |
+|---|---|---|---|---|
+| 11:38 | 2025-02 | 2.08 M | 248 s | first run |
+| 11:52 | 2024-05 | 4.23 M | 356 s | |
+| 11:58 | 2024-06 | 4.89 M | 270 s | |
+| 12:05 | 2024-07 | 4.84 M | 296 s | |
+| 12:32 | 2024-08 | 4.71 M | 301 s | |
+| 12:39 | 2024-09 | 5.11 M | 442 s | |
+| **12:47** | 2024-10 | 5.27 M | **1,687 s** | slowest: compute could not be started, five retries |
+| 13:18 | 2024-11, 2024-12, 2025-01 | 8.34 M | 1,003 s | three months in one run; four retries for the same reason |
+| 13:43 | 2025-03 | 3.24 M | 626 s | |
+| 13:55 | 2025-04, 2025-05 | 8.22 M | 415 s | two months, no retries |
+| 14:22 | 2025-06 | 4.86 M | 413 s | |
+
+Without the two runs that had to wait for compute, the time scales with the rows in the batch, not
+with the history already loaded (8.2 M rows in 415 s, 4.2 M in 356 s).
+
+Slowest run and cause: `943066878271874` took 1,687 s against a typical 300–450 s. The pipeline could
+not start serverless compute (`RESOURCE_EXHAUSTED ... limit for severless compute for free usage`)
+and retried itself with growing waits (cause `RETRY_ON_FAILURE`) until it got compute. It was not a
+bigger batch, schema evolution or a full refresh of a materialized view, and the data in the
+run reconciled. Regression fix to record: keep other serverless work idle during a backfill.
+
+**Expectation trend (prod `silver_trips_clean`, per pipeline update).** Each update processed only
+its new rows (the update row counts add up to the 55.8 M total), so a pass rate is per batch:
+
+| Expectation | Failures per batch | Pass rate |
+|---|---|---|
+| `duration_1min_to_24h` (drop) | 323 to 3,165; highest in the May 2024 batch (JC trips under one minute) | 99.92% or better |
+| `period_matches_file` (warn) | 253 to 1,673 | 99.97% or better |
+| `coords_in_area` (warn) | 688 to 4,582 | 99.9% or better |
+| `stations_present` (warn) | 5,422 to 26,402 | 99.61% to 99.75%; 99.74% in the first batch and 99.61% in the last |
+
+The only movement is in `stations_present`: the share of trips without a station id is a little
+higher in the latest batches. Whether that follows e-bike use was not investigated. No rule shows
+a step change.
+
+**Blocked DAG.** Deliberately failing an upstream task was done in the repair drill (Task 4.3): when
+`reconcile_each` fails, the DAG view shows `prepare`, `has_new` and `build` green, `reconcile_each`
+red, and `quality_check`, `gate`, `certify` and `raise_incident` as **Upstream failed** (grey; they
+never started). After a successful quality gate the not-taken branch shows as **Excluded**
+(`raise_incident` in the green runs, `certify` in the forced-incident run). Excluded means a
+condition routed around the task; upstream failed means a dependency broke.
+
+### Task 5.1 — Access control and the table lifecycle
+
+Run on 2026-09-30 against `prd`. No teammate is invited to the workspace, so the reader is
+`account users` (the assignment's fallback). `src/governance/10_access.sql`:
+
+```
+SHOW GRANTS ON SCHEMA workspace.prd_gold            -- before REVOKE
+account users | SELECT     | SCHEMA | workspace.prd_gold
+account users | USE SCHEMA | SCHEMA | workspace.prd_gold
+
+REVOKE SELECT ON SCHEMA workspace.prd_gold FROM `account users`
+SHOW GRANTS ON SCHEMA workspace.prd_gold            -- after: exactly the SELECT row is gone
+account users | USE SCHEMA | SCHEMA | workspace.prd_gold
+```
+
+The SELECT grant was then restored. Lifecycle: `scratch_undrop` (116 rows) was created in `prd_ops`,
+dropped, listed by `SHOW TABLES DROPPED IN workspace.prd_ops` (managed, deleted 14:51:12 UTC) and
+restored with `UNDROP TABLE`; 116 rows again.
+
+Managed against external tables: dropping a managed table makes Unity Catalog delete its data files,
+which is why `UNDROP` is possible only inside the retention window (7 days by default), after which
+the files are purged; dropping an external table removes only the metadata and the files stay in
+the external storage location. Free Edition has no external locations, so only the managed case
+could be run.
+
+### Task 5.2 — Row filter and column mask
+
+`gold_trip_detail_recent` carries `WITH ROW FILTER rf_scope ON (system)` and masks on `ride_id` and
+the four coordinate columns, declared in its pipeline definition. The same query
+(`src/governance/11_entitlement_states.sql`) in three states of the running user's row in
+`prd_ops.entitlements`:
+
+| State | Entitlement | JC rows | NYC rows | Sample ride id | Avg / max start_lat (JC) |
+|---|---|---|---|---|---|
+| 1 | `*`, sensitive = true | 97,081 | 4,757,496 | `0000AFA56A504706` | 40.732294 / 40.75453 |
+| 2 | `JC`, sensitive = false | 97,081 | **not visible** | `id_00002ccebbc6` | 40.732279 / **40.755** |
+| 3 | back to `*`, true | 97,081 | 4,757,496 | `0000AFA56A504706` | 40.732294 / 40.75453 |
+
+In state 2 the New York group disappears, ids are replaced by a hash, and latitudes are rounded to
+three decimals (about 100 m). The user was returned to state 3 each time, because the pipeline
+refreshes as that user and would otherwise see an empty table. The test used one account playing
+all roles; the assignment also asks for a teammate's run if one was invited, and none was.
+
+### Task 5.3 — ABAC: two policies, many tables
+
+`src/governance/12_abac.sql` on `prd_gold`: governed tags `sensitivity` (`location`) on `lat`/`lng`
+of `gold_station_flow` and `gold_station_health`, and `access_scope` (`partner`) on `system` of the
+five Gold objects other than `gold_trip_detail_recent` (which keeps its manual rules; one column
+cannot carry both). `SHOW POLICIES ON SCHEMA workspace.prd_gold` lists `generalise_locations`
+(COLUMN_MASK) and `partner_rows` (ROW_FILTER). As the JC partner without the sensitive flag:
+
+| Object | Full access | Partner |
+|---|---|---|
+| `gold_demand_hourly` | JC 1,240,100 and NYC 54,534,618 trips | JC 1,240,100 only |
+| `gold_station_health` | 81 JC and 2,040 NYC stations; max lat 40.8863 | 81 JC stations; max lat 40.755, max lng −74.024 (3 decimals) |
+| `gold_station_flow` | JC 528 and NYC 4,727 rows | JC 528 rows; max lat 40.85 |
+
+Tags survive a refresh: a full refresh of `gold_station_flow`, `gold_station_health` and
+`gold_demand_hourly` in dev (update `8000d2`) left all 9 column tags and both policies in place.
+Tested in dev; the same pipeline definition runs in prod. (A first attempt failed only because the
+refresh selection needs the schema-qualified name `workspace.dev_gold.<table>`.)
+
+ABAC against per-table rules: the two policies are defined once on the schema and apply to every
+column carrying the tag, including tables created later, whereas manual rules need one filter or mask
+declared on each table and repeated each time a table is added (nine tagged columns here would have
+been nine manual statements, and a new Gold table would have been unprotected until someone
+remembered). DENY would sit on top of this: a DENY always overrides any GRANT, including inherited,
+group and ownership grants (metastore admins are exempt), but only `MANAGE ACCESS CONTROL` can be
+denied today and creating one needs classic compute on DBR 18 LTS or later, so it is not available
+on Free Edition and was not implemented.
+
+### Task 5.4 — Dashboard and lineage
+
+The client dashboard is code: `src/dashboards/client_dashboard.lvdash.json` with
+`resources/dashboard.yml` (catalog and schema come from `dataset_catalog` / `dataset_schema`, so the
+same file serves `dev_gold` and `prd_gold`) and a `refresh_dashboard` task in the release job after
+`release_summary`. It has a certified-release tile (from `ops.release_status`), the hour × weekday
+heatmap and monthly e-bike share and trips per day (BQ1), the rain table, the top-20 drain and fill
+stations with a map (BQ2, coordinates masked by policy for non-entitled readers), duration and
+round-trip tables (BQ3), the busy-but-empty stations table (BQ4) and a footer crediting Citi Bike
+public system data (Lyft Bikes and Scooters, Citi Bike Data License Agreement) and NOAA. It carries
+no logos and exposes no trip-level rows.
+
+Prod dashboard: `https://dbc-cb530432-dccc.cloud.databricks.com/dashboardsv3/01f1bcc522a2147bbef41fcb1a5e703c/published`
+(published). The release job refreshed it in every release since PR #2 merged: all 10 later
+`release_job` runs (trigger Table update) succeeded, the latest (`1062088722485667`, 30 s) with
+`release_summary` 8 s and `refresh_dashboard` 21 s. The dataset queries were checked by running each
+one against the gold schema; the visual layout has not been reviewed on screen (screenshot to add).
+
+Lineage (from the Unity Catalog lineage API): `bronze_trips` → `silver_trips_clean` → `silver_trips` →
+`gold_station_flow`, `gold_weather_demand`, `gold_demand_hourly`, `gold_ride_behaviour`,
+`gold_station_health`; `gold_station_flow` has upstreams `silver_trips` and `dim_station`. The
+graph screenshot from Catalog Explorer is still to be captured.
+
+BQ1–BQ4 with SQL, results and plain-language answers: `docs/business-questions.md`.
+
 #### What this means for the rest of the build
 - No REST host used by this variant is blocked from serverless notebooks — Tasks 1.3/1.4 (COPY INTO,
   weather REST, GBFS poll) can run directly in the workspace; no laptop-side REST fallback is needed.
@@ -628,3 +950,72 @@ delivery):
 
 *(More sections — ingestion decisions, rules table, trigger table, access model, etc. — are added as
 each task is completed, per the assignment's "capture evidence as you go" instruction.)*
+
+---
+
+## Access model
+
+| Who | Gets | How |
+|---|---|---|
+| Engineer (the workspace admin) | Everything | Owner; entitlement row `*` with sensitive access, which the pipeline and dashboard refresh also run as |
+| Analyst | Read on `prd_gold` only, with coordinates rounded and partner scope enforced | `GRANT USE CATALOG`, `USE SCHEMA`, `SELECT` on the gold schema; two ABAC policies |
+| Jersey City partner | Jersey City rows only, coordinates rounded to 3 decimals, ride ids pseudonymised | `prd_ops.entitlements` row (`JC`, not sensitive); row filter `rf_scope`, masks `mask_text` / `mask_coord` |
+
+Nothing outside `prd_gold` is granted. Raw trip data stays in the landing Volume and the lakehouse
+schema, and no one but the engineer is granted either. The mechanism was proven with one account
+playing each role (Task 5.2); a second account or a teammate was not used.
+
+## Assumptions
+
+- A trip belongs to the month it starts; files are the unit of reconciliation, not calendar months.
+- Duration floor 1 minute and ceiling 24 hours; rider type must be `member` or `casual`.
+- Trips without a station id are valid trips but are excluded from the station-level questions and counted.
+- The trip file station id equals the GBFS `short_name` (verified by the 91–96% match rates).
+- Rain day is 5 mm or more at Central Park; temperature bands use the daily maximum.
+- Weekdays are Monday to Friday, holidays included; peaks are 07:00–10:00 and 16:00–19:00.
+- GBFS availability from September 2026 is compared with demand from May 2024 to June 2025; it is an indication, not a measured relationship.
+
+## Known limitations
+
+- Free Edition: serverless only, six settable Spark settings, no Spark UI, one pipeline per type at a time, a daily compute quota and a serverless concurrency limit (hit once, Task 4.5), no external locations, no DENY policies, no account-level APIs (CI uses a personal access token).
+- Task counts per query are not recorded: they are visible only in the query profile, which has to be read in the UI.
+- BQ4 rests on 30 availability snapshots covering 14.5 hours of one day, compared with 14 months of demand.
+- The row filter was proven for the trip-level object with one account; ABAC tag survival across refresh was tested in dev.
+- Status of manual UI evidence (screenshots, the Git-folder conflict resolution, the failure e-mail) is tracked in `docs/evidence.md`.
+
+## What I would change for a real client
+
+- Authenticate CI as a service principal with OIDC federation (no stored token) instead of a personal access token.
+- Deploy to a paid or trial workspace with a proper prod catalog and separate compute budget; the same bundle needs only a new target.
+- Send alerts to a team channel or paging tool, not a single mailbox, and alert on the SLA check as well as on failures.
+- Collect GBFS continuously and keep months of availability so BQ4 covers the same period as demand.
+- Grant groups instead of `account users`, and add a real partner group with its own entitlement rows.
+- Add unit tests for the transformation logic to CI before `bundle validate` (stretch goal S2).
+
+## Three things I learned
+
+(Drafted with the AI assistant from what happened in this build; to be rewritten in my own words.)
+
+1. A failing deploy can be a sequencing problem, not a code problem: the prod deploy failed because
+   two triggers pointed at objects only `setup_job` creates, and the fix was to run setup and deploy again.
+2. A slow run is not automatically a data problem: the 28-minute build run was Free Edition refusing to
+   start compute, visible only in the pipeline event log, not in the job's task durations.
+3. Reconciliation has to be designed in: the `coalesce(rule, false)` on drop rules and the per-file manifest
+   are what make "Bronze = clean + quarantine" an exact equation instead of a hope, for all 28 files.
+
+## Cleanup
+
+Everything below is reversible only by redeploying, so do it after the assignment is reviewed.
+
+```bash
+databricks bundle destroy -t dev          # dev jobs, pipeline, dashboard
+databricks bundle destroy -t prod         # prod jobs, pipeline, dashboard
+```
+
+Then drop the schemas and the performance-lab tables (`DROP SCHEMA workspace.dev_<layer> CASCADE`,
+same for `prd_`), revoke the `account users` grants on `prd_gold`, drop the policies
+(`DROP POLICY generalise_locations ON SCHEMA workspace.prd_gold`, and `partner_rows`) and the governed
+tags `sensitivity` and `access_scope`, delete the secret scope (`databricks secrets delete-scope a2`),
+revoke the personal access token and the GitHub repository secrets, and delete the local
+`.landing_cache/` (about 10 GB) and the throwaway branches (`conflict-a`, `conflict-b`,
+`drill/broken-library`).
