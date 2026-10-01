@@ -13,7 +13,22 @@ env:
   # PAT on Free Edition; see note below
 
 jobs:
+  test:
+    # S2: unit tests of the transformations on a local PySpark session, before anything is validated
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
   validate:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
