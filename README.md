@@ -204,8 +204,13 @@ Files marked Day 5 (`resources/dashboard.yml`, `src/governance/*.sql`, the dashb
 
 - **Mandatory**: all Day 1–4 tasks, plus Day 5 governance/dashboard/README/evidence/demo — this is
   the scored 100-point rubric.
-- **Optional (bonus, ≤5 pts)**: Lakeflow Connect Jira connector, pytest/chispa unit tests in CI,
-  SCD Type 2 station dimension — attempted only after everything else is done.
+- **Optional (bonus, ≤5 pts)**: attempted after everything else.
+  - S1 Jira connector: **not done**; it needs a Jira project and the Beta connector, which this workspace does not have.
+  - S2 pytest/chispa tests in CI: done, 15 tests and a `test` job before `bundle validate`
+    (pull request [#7](https://github.com/FahimFaysal/a2c_bikeshare_ops/pull/7), `docs/stretch-s2-tests.md`).
+  - S3 SCD Type 2 station dimension: done and tested in dev with a synthetic changed snapshot
+    (pull request [#8](https://github.com/FahimFaysal/a2c_bikeshare_ops/pull/8), `docs/stretch-s3-scd2.md`).
+    Both are open pull requests until merged; neither is in the prod deployment yet.
 - **Free Edition limitations to record, not work around**: no Spark UI/cache/persist/Scala/R; only
   6 Spark settings changeable; no classic clusters; no external tables; DENY policies unavailable;
   no account-level APIs (PAT-based CI/CD instead of OIDC service principal); governed tags/ABAC
